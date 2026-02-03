@@ -1,4 +1,4 @@
-﻿{
+{
     "Boxes.Alerts.Form.Antiques.Auction": "Veiling",
     "Boxes.Alerts.Form.Antiques.Cooldown": "Veiling wachttijd",
     "Boxes.Alerts.Form.Antiques.Dealer": "Antiquair",
@@ -988,6 +988,24 @@
     "Boxes.ProductionsRating.Enabled": "Zet aan",
     "Boxes.ProductionsRating.Explainer": "Hoe werkt het? Selecteer hoeveel elk van je gebouwen idealiter per tegel zou moeten produceren. De balans tussen alle geselecteerde waarden is belangrijk voor de uiteindelijke beoordeling. Als je meer dan één gebouw van hetzelfde type hebt, wordt alleen het gebouw met het hoogste tijdperk geëvalueerd.",
     "Boxes.ProductionsRating.Filter": "Zoek",
+    "Boxes.ProductionsRating.PresetDefault": "Standaard",
+    "Boxes.ProductionsRating.PresetImported": "Geïmporteerd",
+    "Boxes.ProductionsRating.PresetSave": "Opslaan",
+    "Boxes.ProductionsRating.PresetSaveAs": "Opslaan als",
+    "Boxes.ProductionsRating.PresetRename": "Hernoemen",
+    "Boxes.ProductionsRating.PresetDuplicate": "Dupliceren",
+    "Boxes.ProductionsRating.PresetDelete": "Verwijderen",
+    "Boxes.ProductionsRating.PresetReset": "Resetten",
+    "Boxes.ProductionsRating.PresetExport": "Presets exporteren",
+    "Boxes.ProductionsRating.PresetImport": "Presets importeren",
+    "Boxes.ProductionsRating.PresetPromptSaveAs": "Preset opslaan als:",
+    "Boxes.ProductionsRating.PresetPromptRename": "Preset hernoemen:",
+    "Boxes.ProductionsRating.PresetPromptDuplicate": "Preset dupliceren als:",
+    "Boxes.ProductionsRating.PresetCopySuffix": "Kopie",
+    "Boxes.ProductionsRating.PresetNameExists": "Er bestaat al een preset met deze naam.",
+    "Boxes.ProductionsRating.PresetConfirmDelete": "Deze preset verwijderen?",
+    "Boxes.ProductionsRating.PresetConfirmReset": "Deze preset terugzetten naar standaardwaarden?",
+    "Boxes.ProductionsRating.PresetImportError": "Kan geen presets uit dit bestand importeren.",
     "Boxes.ProductionsRating.FindBuilding": "Zoek",
     "Boxes.ProductionsRating.FindSpecialBuilding": "Vind Speciaal Gebouw",
     "Boxes.ProductionsRating.HighlightsExplained": "Gebouwen markeren: Klik op een willekeurige rij om de gebouwen te selecteren die je gemakkelijker wilt vergelijken. Zoekresultaten worden automatisch gemarkeerd.",
@@ -1508,3 +1526,4 @@
     "StrategyPoints.FPInBar": "FoE-Helper: Aantal FP in je balk.",
     "_Language": "Nederlands"
 }
+
