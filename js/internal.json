@@ -65,7 +65,7 @@
 	},
 	{
 		"name": "city-builder",
-		"parts": ["worker", "renderer", "interaction", "optimizer", "progress"]
+		"parts": ["worker", "renderer", "interaction", "optimizer", "progress", "rebuild-guide"]
 	},
 	"building-marker",
 	"hidden-rewards",

@@ -530,7 +530,7 @@ CityBuilder.Optimizer = {
             }));
 
             $('#CityBuilderBoxBody .loading-title').text(i18n('Boxes.CityBuilder.OptimizeRound').replace('__round__', round + 1).replace('__rounds__', O.Rounds));
-            const budget = localStorage.getItem('CityBuilderKeepLayout') === '1' ? O.KeepBudget : O.RoundBudget;
+            const budget = O.RoundBudget;
             const result = await CityBuilder.runWorker(input, budget, (pct) => {
                 const total = Math.round((round * 100 + pct) / O.Rounds);
                 $('#CityBuilderBoxBody .calc-progress').text(total + '%');
@@ -538,7 +538,8 @@ CityBuilder.Optimizer = {
             });
             // aborted: undefined tells the caller to drop everything
             if (!result) return undefined;
-            if (!result.success) return best;
+            // an incomplete layout still counts: its missing buildings steer the next round
+            if (!result.success && !result.incomplete) return best;
 
             const v = result.variants[0];
             const free = O.freeTiles(v.layout);
