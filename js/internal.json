@@ -52,7 +52,7 @@
 	},
 	{
 		"name": "city-builder",
-		"parts": ["worker", "renderer", "interaction"]
+		"parts": ["worker", "renderer", "interaction", "rebuild-guide"]
 	},
 	"building-marker",
 	"hidden-rewards",

@@ -127,6 +127,38 @@
 	transform: skewX(-63.5deg) skewY(14deg) scale(var(--scale-x), var(--scale-y)) translate(var(--tx), var(--ty));
 	opacity: 0.9;
 }
+/* top-down view: no isometric skew, opaque background, so the plan can be
+   read like the city map instead of blending into the live city */
+.map-grid-wrapper.flat-view {
+	width: auto;
+	height: auto;
+	overflow: visible;
+	transform: scale(var(--scale-x));
+	transform-origin: 0 0;
+	opacity: 1 !important;
+	background: var(--window-bg);
+}
+.map-grid-wrapper.flat-view .map-grid-canvas {
+	position: static;
+	display: block;
+	cursor: default;
+}
+#CityBuilderBoxBody:has(.map-grid-wrapper.flat-view) {
+	overflow: auto;
+}
+.optimized-city-controls .flat-view-control {
+	margin-left: 10px;
+	cursor: pointer;
+	white-space: nowrap;
+}
+.optimized-city-controls .flat-view-control input {
+	vertical-align: middle;
+	margin-right: 4px;
+}
+.optimized-city-controls .btn {
+	white-space: nowrap;
+}
+
 .map-grid-canvas {
 	position: absolute;
 	left: 0;
@@ -183,6 +215,24 @@ body.foe-helper-popup #CityBuilderBox .map-grid-wrapper {
 	color: #ffffff;
 }
 
+/* switch between the layouts the search kept: fewer roads or a bigger free
+   square, never both - so the trade is the player's to make, not the ranking's */
+.variant-switch {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	margin-left: 8px;
+}
+.variant-switch .variant-label {
+	opacity: 0.75;
+}
+.variant-switch .btn.variant-active {
+	color: var(--black-100, #000);
+	font-weight: 600;
+	background: var(--gold, #fedc00);
+	border-color: var(--gold, #fedc00);
+}
+
 /* pop-up window: the opacity overlay slider is pointless there */
 body.foe-helper-popup #CityBuilderBox .opacity-control {
 	display: none;
@@ -191,19 +241,116 @@ body.foe-helper-popup #CityBuilderBox .map-grid-wrapper {
 	opacity: 1 !important;
 }
 
+/* reported failure: the search found no layout that keeps every building */
+.city-builder-incomplete {
+	pointer-events: all;
+	margin: 30px auto;
+	max-width: 460px;
+	padding: 16px 20px;
+	background-color: #070b18b5;
+	border: 1px solid var(--black-65);
+	border-radius: 4px;
+	text-align: left;
+	color: #fff;
+}
+.city-builder-incomplete .incomplete-title {
+	font-size: 1.2rem;
+	/* same signal colour the stats panel uses for negative values */
+	color: #ff8d8d;
+	margin-bottom: 10px;
+}
+.city-builder-incomplete .incomplete-count {
+	margin: 10px 0;
+}
+.city-builder-incomplete .incomplete-list {
+	max-height: 220px;
+	overflow-y: auto;
+	margin: 0 0 14px 18px;
+	font-size: 12px;
+}
+.city-builder-incomplete .btn {
+	margin-right: 8px;
+	cursor: pointer;
+}
+
 /* loading panel: solid background so it stays readable on top of the live city */
+/* Message states (loading, no layout, failure) paint the whole window solid.
+   The wooden colour is written out instead of var(--window-bg): that variable
+   is a url() into the extension's images and does not always resolve inside the
+   game page, which left the panel floating on the live city. */
+#CityBuilderBox.window-box:has(.msg-state) {
+	pointer-events: all !important;
+	background-color: #2a1608 !important;
+	background-image: repeating-linear-gradient(90deg, rgba(0,0,0,.16) 0 2px, rgba(255,255,255,.03) 2px 5px),
+		linear-gradient(180deg, #3a2010, #2a1608 60%, #201006) !important;
+	border: 1px solid #1a0d05 !important;
+	border-radius: 4px !important;
+	box-shadow: 0 6px 24px rgba(0,0,0,.6) !important;
+}
+#CityBuilderBox.window-box:has(.msg-state) .window-head {
+	width: auto !important;
+	background: var(--window-head-bg) !important;
+	box-shadow: var(--window-head-shadow) !important;
+	pointer-events: all;
+}
+#CityBuilderBoxBody.msg-state .city-builder-loading,
+#CityBuilderBoxBody.msg-state .city-builder-incomplete {
+	background: none;
+	border: none;
+}
+/* Top-down view is a plan, not an overlay: give the box a real window - wooden
+   ground, frame, its own scrolling and a full-width head beam. The flat map
+   floating straight on the live city looked like a glitch. The colours are
+   written out for the same reason as above. */
+#CityBuilderBox.window-box:has(.flat-mode) {
+	pointer-events: all !important;
+	background-color: #2a1608 !important;
+	background-image: repeating-linear-gradient(90deg, rgba(0,0,0,.16) 0 2px, rgba(255,255,255,.03) 2px 5px),
+		linear-gradient(180deg, #3a2010, #2a1608 60%, #201006) !important;
+	border: 1px solid #1a0d05 !important;
+	border-radius: 4px !important;
+	box-shadow: 0 6px 24px rgba(0,0,0,.6) !important;
+}
+#CityBuilderBox.window-box:has(.flat-mode) .window-head {
+	width: auto !important;
+	background: var(--window-head-bg) !important;
+	box-shadow: var(--window-head-shadow) !important;
+}
+#CityBuilderBoxBody.flat-mode {
+	flex: 1 1 auto;
+	pointer-events: all;
+	overflow: auto;
+	text-align: left;
+}
+#CityBuilderBoxBody.flat-mode .map-grid-wrapper.flat-view {
+	background: none;
+	margin: 8px;
+}
+
+#CityBuilderBoxBody.msg-state {
+	flex: 1 1 auto;
+	pointer-events: all;
+	overflow: auto;
+	text-align: center;
+}
+
+
+/* The box itself is a click-through overlay on the live city, so every panel
+   inside has to take the pointer events back - and it follows the look of
+   .optimized-city-controls instead of painting a window of its own */
 .city-builder-loading {
+	pointer-events: all;
 	margin: 40px auto;
 	max-width: 340px;
-	padding: 24px;
-	background: rgba(15, 18, 24, 0.92);
-	border: 1px solid rgba(255, 255, 255, 0.25);
-	border-radius: 8px;
+	padding: 16px 20px;
+	background-color: #070b18b5;
+	border: 1px solid var(--black-65);
+	border-radius: 4px;
 	text-align: center;
 	color: #fff;
 }
 .city-builder-loading .loading-title {
-	font-size: 14px;
+	font-size: 1.2rem;
 	margin-bottom: 14px;
 }
 .city-builder-loading .loading-bar {
@@ -215,14 +362,31 @@ body.foe-helper-popup #CityBuilderBox .map-grid-wrapper {
 .city-builder-loading .loading-bar-fill {
 	height: 100%;
 	width: 0;
-	background: linear-gradient(90deg, #f6b640, #ffd97a);
+	background: var(--sunflower);
 	border-radius: 7px;
 	transition: width 0.3s linear;
 }
 .city-builder-loading .calc-progress {
 	margin-top: 8px;
-	font-size: 13px;
-	color: #ffd97a;
+	font-size: 1.0rem;
+	color: var(--sunflower);
+}
+/* the search runs for minutes: phase, remaining time and best result so far */
+.city-builder-loading .calc-phase {
+	margin-top: 6px;
+	font-size: 12px;
+	color: #fff;
+}
+.city-builder-loading .calc-detail {
+	margin-top: 4px;
+	font-size: 11px;
+	color: rgba(255, 255, 255, 0.7);
+	line-height: 1.5;
+	min-height: 16px;
+}
+.city-builder-loading .calc-stop {
+	margin-top: 14px;
+	white-space: nowrap;
 }
 
 /* road balance panel top-left: live city vs planned layout */
@@ -240,9 +404,233 @@ body.foe-helper-popup #CityBuilderBox .map-grid-wrapper {
 	line-height: 1.6;
 	pointer-events: none;
 }
+/* In the top-down view the road balance is a strip in normal flow above the
+   map instead of a panel floating on it: the city is drawn from the top left
+   corner, which is exactly where the panel sat, so it hid the buildings the
+   plan is about. The isometric overlay has no room for a strip - there it
+   stays a floating panel. */
+#CityBuilderBoxBody:has(.map-grid-wrapper.flat-view) .city-builder-stats {
+	position: static;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0 18px;
+	width: fit-content;
+	max-width: calc(100% - 20px);
+	margin: 0 0 6px;
+}
 .city-builder-stats .saving {
 	color: #8be28b;
 }
 .city-builder-stats .extra {
 	color: #ff8d8d;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Rebuild guide: the chosen layout as an ordered walk through the city, one
+   stripe of the game view at a time (js/parts/rebuild-guide.js) */
+
+#RebuildGuideBox {
+	width: 460px;
+	min-width: 320px;
+}
+#RebuildGuideBoxBody {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 8px;
+	max-height: 78vh;
+	overflow: auto;
+}
+.rg-empty {
+	padding: 14px 10px;
+	line-height: 1.5;
+}
+.rg-head .rg-plan {
+	font-weight: bold;
+	margin-bottom: 3px;
+}
+.rg-age {
+	margin-left: 8px;
+	font-weight: normal;
+	font-size: 11px;
+	opacity: .65;
+}
+.rg-progress {
+	font-size: 12px;
+}
+.rg-bar {
+	height: 6px;
+	border-radius: 3px;
+	background: var(--black-40, rgba(0, 0, 0, .4));
+	overflow: hidden;
+	margin-bottom: 3px;
+}
+.rg-bar-fill {
+	height: 100%;
+	background: #5dad74;
+}
+.rg-warn {
+	background: #6b2020;
+	border: 1px solid #a33;
+	border-radius: 3px;
+	padding: 3px 6px;
+	font-size: 12px;
+}
+.rg-bandbar {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-wrap: wrap;
+}
+.rg-bandbar .rg-open {
+	font-size: 12px;
+	opacity: .85;
+	margin-left: auto;
+}
+/* the building to pick up now, spelled out above the list - the number on the
+   map says where, never what */
+.rg-now {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	background: #4a3a12;
+	border: 1px solid #ffc43d;
+	border-radius: 3px;
+	padding: 4px 8px;
+}
+.rg-now-no {
+	background: #ffc43d;
+	color: #20160a;
+	font-weight: bold;
+	border-radius: 3px;
+	padding: 0 6px;
+}
+.rg-now-size {
+	font-weight: bold;
+	opacity: .9;
+}
+.rg-now-name {
+	font-weight: bold;
+	flex: 1 1 auto;
+}
+.rg-now-pos {
+	font-weight: bold;
+	color: #ffc43d;
+	white-space: nowrap;
+}
+.rg-now-blocked {
+	font-size: 12px;
+	color: #ff9d9d;
+}
+/* both halves have to stay on screen: a full-height map used to push the list
+   of buildings out of the box, which left the numbers on it unexplained */
+.rg-steps-wrap {
+	max-height: 34vh;
+	overflow: auto;
+}
+/* The frame scrolls, the map keeps its natural size. Both matter: as a flex item
+   the canvas was stretched to the width of the box, which drew a 4x4 building as
+   a rectangle, and a canvas scaled to fit ignores the zoom entirely. */
+.rg-mapwrap {
+	max-height: 42vh;
+	overflow: auto;
+	background: #10151b;
+	border-radius: 3px;
+	align-self: stretch;
+}
+.rg-map {
+	display: block;
+	cursor: crosshair;
+}
+/* what the cursor is on, spelled out - the native tooltip needs the mouse to
+   rest and is gone again before it can be read */
+.rg-read {
+	min-height: 16px;
+	font-size: 12px;
+	font-weight: bold;
+	color: #ffc43d;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+table.rg-steps {
+	width: 100%;
+	font-size: 12px;
+}
+table.rg-steps tr.rg-current td {
+	background: #4a3a12;
+}
+table.rg-steps td {
+	padding: 1px 4px;
+	white-space: nowrap;
+}
+table.rg-steps .rg-no {
+	width: 24px;
+	text-align: right;
+	opacity: .8;
+}
+table.rg-steps .rg-size {
+	width: 42px;
+	opacity: .8;
+}
+table.rg-steps .rg-name {
+	white-space: normal;
+}
+table.rg-steps .rg-pos {
+	text-align: right;
+	font-weight: bold;
+}
+table.rg-steps .rg-state {
+	font-size: 11px;
+	color: #ff9d9d;
+	white-space: normal;
+}
+table.rg-steps tr.rg-done {
+	opacity: .5;
+}
+table.rg-steps tr.rg-done .rg-no {
+	color: #8be28b;
+}
+/* a spot filled by a different building of the same size: done, but the one the
+   plan meant for it still has to go somewhere, so it stays readable */
+table.rg-steps tr.rg-done:has(.rg-swap) {
+	opacity: .85;
+}
+.rg-swap {
+	color: #9fd0ff;
+}
+table.rg-steps tr.rg-blocked .rg-pos {
+	color: #ff9d9d;
+}
+.rg-foot {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+	font-size: 12px;
+}
+.rg-foot input[type="number"] {
+	width: 48px;
+}
+.rg-foot input[type="range"] {
+	width: 80px;
+	vertical-align: middle;
+}
+.rg-hint {
+	font-size: 11px;
+	opacity: .7;
+	line-height: 1.4;
+}
+/* the planned spot, written into the size list of the reconstruction menu -
+   dim unless it belongs to the stripe being worked on */
+.rg-target {
+	margin-left: 6px;
+	font-size: 11px;
+	opacity: .5;
+	white-space: nowrap;
+}
+.rg-target.rg-target-now {
+	opacity: 1;
+	color: #ffc43d;
+	font-weight: bold;
 }

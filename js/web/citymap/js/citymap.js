@@ -247,9 +247,26 @@ let CityMap = {
 			// City builder only works with the main city, not while visiting gg/gex
 			if (ActiveMap === 'main') {
 				btnGroup.append($('<button class="btn ml-auto" />').attr({ id: 'open-city-builder', onclick: 'CityBuilder.init()' }).text(i18n('Boxes.CityBuilder.Title')));
+
+				// a plan handed over earlier is carried out over days and reloads,
+				// so it needs a way back that does not run the search again
+				if (typeof RebuildGuide !== 'undefined' && RebuildGuide.HasStoredPlan()) {
+					btnGroup.append($('<button class="btn ml-auto" />')
+						.attr({ id: 'open-rebuild-guide', onclick: 'RebuildGuide.Open()' })
+						.text(i18n('Boxes.RebuildGuide.Title')));
+				}
 			}
 
 			menu.append(btnGroup);
+		}
+		// another player's city can be replanned too - the data is the same, it
+		// only needs the unlocked areas, which are not always transmitted
+		else if (ActiveMap === 'OtherPlayer' && CityMap.OtherPlayer.unlockedAreas) {
+			menu.append($('<div class="btn-group" />').append(
+				$('<button class="btn ml-auto" />')
+					.attr({ id: 'open-city-builder', onclick: 'CityBuilder.init()' })
+					.text(i18n('Boxes.CityBuilder.Title'))
+			));
 		}
 		oB.append(wrapper);
 

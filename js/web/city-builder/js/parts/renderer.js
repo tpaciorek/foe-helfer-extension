@@ -118,6 +118,7 @@ CityBuilder.Renderer = {
                 if (typeof ActiveMap !== 'undefined' && ActiveMap === 'era_outpost') areas = CityMap.EraOutpost.areas;
                 else if (typeof ActiveMap !== 'undefined' && ActiveMap === 'guild_raids') areas = CityMap.QI.areas;
                 else if (typeof ActiveMap !== 'undefined' && ActiveMap === 'cultural_outpost') areas = CityMap.CulturalOutpost.areas;
+                else if (typeof ActiveMap !== 'undefined' && ActiveMap === 'OtherPlayer' && CityMap.OtherPlayer.unlockedAreas) areas = CityMap.OtherPlayer.unlockedAreas;
                 else areas = CityMap.Main.unlockedAreas;
             }
         } catch (err) {
@@ -324,7 +325,11 @@ CityBuilder.Renderer.Layers = [
         name: 'background',
         draw: (v) => {
             if (v.areas.length > 0) {
-                v.ctx.fillStyle = 'rgba(124, 230, 76, 0.3)';
+                // Solid green for the unlocked ground: every tile no building
+                // covers is free space, and that is the result the plan is
+                // judged on - at 30% opacity it was barely distinguishable
+                // from the map background
+                v.ctx.fillStyle = '#7ee081';
                 for (const area of v.areas) {
                     v.ctx.fillRect(
                         parseInt(area.x) * v.scale,
@@ -463,6 +468,16 @@ CityBuilder.Renderer.Layers = [
             v.ctx.fillRect(bx, by, bw, bh);
             v.ctx.lineWidth = 2.5;
             v.ctx.strokeRect(bx + 1, by + 1, bw - 2, bh - 2);
+        }
+    },
+    {
+        // Rebuild guide: while a plan is being carried out the same map shows
+        // how far it has come and which stripe comes next - laid over the live
+        // city that is the only view that says where a coordinate really is
+        name: 'rebuild-guide',
+        draw: (v) => {
+            if (typeof RebuildGuide === 'undefined' || !RebuildGuide.MatchesShown()) return;
+            RebuildGuide.PaintOverlay(v.ctx, v.scale);
         }
     }
 ];
