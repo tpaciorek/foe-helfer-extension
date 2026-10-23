@@ -2260,6 +2260,136 @@ CityBuilder.WorkerCode = `class CityOptimizerBrowser {
                 return { tries: tries, kept: kept, saved: startRoads - this.roadTiles.size };
             }
 
+            /**
+             * Gather the scattered spare space into a bigger square without
+             * touching a single road.
+             *
+             * Only roadless buildings move: they have no street to lose, so the
+             * road count stays exactly where it is. For each size one bigger
+             * than the square already there, the spot is the one that costs
+             * the fewest buildings to clear, and the cleared ones go into the
+             * loose free tiles elsewhere - the very speckles that made the
+             * spare space useless - with the eviction chain as the last resort.
+             * Each size grows from the layout of the one before, so the square
+             * widens in place instead of jumping across the map.
+             *
+             * @param {number} budgetMs - wall clock for the whole pass
+             * @returns {{from:number, to:number, steps:Array<{size:number, moved:number}>}}
+             *          moved counts buildings off their spot at the start of the pass
+             */
+            tidySquare(budgetMs) {
+                const now = () => (typeof performance !== 'undefined') ? performance.now() : Date.now();
+                const deadline = now() + budgetMs;
+                // copies, so the last export keeps its own buildings
+                this.restore(this.snapshot());
+
+                const base = this.snapshot();
+                const home = new Map(base.placed.map(b => [b.id, b.x + ',' + b.y]));
+                const count = base.placed.length;
+                const decos = this.buildings.filter(b => b.street_level === 0);
+                let free = 0;
+                for (const key of this.grid.keys()) if (this.isFreeKey(key)) free++;
+                const start = this.largestFreeSquare();
+                const steps = [];
+                let from = base;
+
+                for (let size = start + 1; size * size <= free && now() < deadline; size++) {
+                    this.restore(this.copyOf(from));
+                    let got = null;
+                    for (const spot of this.squareSpots(size, 10)) {
+                        if (now() > deadline) break;
+                        this.restore(this.copyOf(from));
+                        if (!this.carveSquare(spot, size, decos, count)) continue;
+                        let moved = 0;
+                        for (const b of this.placedBuildings) if (home.get(b.id) !== b.x + ',' + b.y) moved++;
+                        if (!got || moved < got.moved) got = { snap: this.snapshot(), moved: moved };
+                    }
+                    // a size no spot can take in time ends the pass - a bigger
+                    // one would only need more of the same space
+                    if (!got) break;
+                    steps.push({ size: size, moved: got.moved });
+                    from = got.snap;
+                }
+
+                this.restore(this.copyOf(from));
+                return { from: start, to: steps.length ? steps[steps.length - 1].size : start, steps: steps };
+            }
+
+            /**
+             * Where a square of the given size could be cleared: every spot
+             * holding nothing but free tiles and roadless buildings, cheapest
+             * first - fewest buildings to move, then the most free tiles
+             * already inside it.
+             */
+            squareSpots(size, limit) {
+                const minX = this.mapBounds.minX, maxX = this.mapBounds.maxX;
+                const minY = this.mapBounds.minY, maxY = this.mapBounds.maxY;
+                const owner = new Map();
+                for (const b of this.placedBuildings) {
+                    if ((b.street_level || 0) !== 0 || b.type === 'main_building') continue;
+                    for (let i = b.x; i < b.x + b.width; i++) {
+                        for (let j = b.y; j < b.y + b.height; j++) owner.set(i + ',' + j, b);
+                    }
+                }
+                const out = [];
+                for (let y = minY; y + size <= maxY; y++) {
+                    for (let x = minX; x + size <= maxX; x++) {
+                        let ok = true, freeTiles = 0;
+                        const movers = new Set();
+                        for (let i = x; i < x + size && ok; i++) {
+                            for (let j = y; j < y + size && ok; j++) {
+                                const key = i + ',' + j;
+                                if (this.isFreeKey(key)) { freeTiles++; continue; }
+                                const b = this.grid.get(key) === 1 ? owner.get(key) : undefined;
+                                if (b) movers.add(b); else ok = false;
+                            }
+                        }
+                        if (ok) out.push({ x: x, y: y, movers: movers, free: freeTiles });
+                    }
+                }
+                // Two ways to be cheap, and the cheapest by one is often hopeless
+                // by the other: four small buildings to move sound cheap, but if
+                // the spot holds hardly a free tile their whole area has to fit
+                // into the loose speckles elsewhere - which is exactly where it
+                // does not fit. So half the candidates are the spots that need
+                // the fewest moves, half the ones that already hold the most
+                // free space.
+                const byMoves = out.slice().sort((p, q) => p.movers.size - q.movers.size || q.free - p.free || p.y - q.y || p.x - q.x);
+                const byFree = out.slice().sort((p, q) => q.free - p.free || p.movers.size - q.movers.size || p.y - q.y || p.x - q.x);
+                const picked = [];
+                for (let i = 0; picked.length < limit && i < out.length; i++) {
+                    for (const s of [byMoves[i], byFree[i]]) {
+                        if (picked.length < limit && picked.indexOf(s) === -1) picked.push(s);
+                    }
+                }
+                return picked;
+            }
+
+            /**
+             * Clear one square and find the evicted buildings a new home.
+             * Leaves the grid as it is on failure - the caller rolls back.
+             */
+            carveSquare(spot, size, decos, count) {
+                // by id: the spot was found on another copy of the layout
+                const ids = new Set([...spot.movers].map(b => b.id));
+                const movers = this.placedBuildings.filter(b => ids.has(b.id));
+                for (const b of movers) this.removePlaced(b);
+                // fence the square off while its tenants look for a home; the
+                // reserve tiles inside it go back to being the reserve
+                const fenced = [];
+                for (let i = spot.x; i < spot.x + size; i++) {
+                    for (let j = spot.y; j < spot.y + size; j++) {
+                        const key = i + ',' + j;
+                        fenced.push([key, this.grid.get(key) === 7 ? 7 : 0]);
+                        this.grid.set(key, 7);
+                    }
+                }
+                const rest = this.packRoadlessMaxRects(movers, 0);
+                if (rest.length) this.makeRoomForLeftovers(decos, 3, 300);
+                for (const [key, v] of fenced) this.grid.set(key, v);
+                return this.placedBuildings.length === count;
+            }
+
             // side of the largest all-free square, the reserve counting as free
             largestFreeSquare() {
                 const minX = this.mapBounds.minX, maxX = this.mapBounds.maxX;
@@ -3795,6 +3925,10 @@ CityBuilder.WorkerCode = `class CityOptimizerBrowser {
         // from the randomized restarts, which measured as the part of the
         // search that least often produced the winner.
         const LNS_SHARE = 0.25;
+        // More when the player's own city came along: polishing it is the plan
+        // that can actually be carried out, and on a real 420-building city the
+        // ruin and recreate there was still finding road tiles at 40 s.
+        const LNS_SHARE_LIVE = 0.4;
 
         /**
          * Pick between two complete layouts.
@@ -3924,7 +4058,7 @@ CityBuilder.WorkerCode = `class CityOptimizerBrowser {
                 // the tail of the clock belongs to ruin and recreate, so every
                 // phase that builds from scratch stops where it begins - on a
                 // slow machine the base phase alone could otherwise eat it all
-                const lnsMs = budgetMs * LNS_SHARE;
+                const lnsMs = budgetMs * (input.roadTiles && input.roadTiles.length ? LNS_SHARE_LIVE : LNS_SHARE);
                 const searchLeft = () => remaining() - lnsMs;
                 const strategies = STRATEGIES;
                 const sortModes = SORT_MODES;
@@ -4104,7 +4238,7 @@ CityBuilder.WorkerCode = `class CityOptimizerBrowser {
                 let tuned = null;
                 // the grid of the live city (polished when that paid off), for
                 // the ruin-and-recreate phase at the end
-                let liveOpt = null, liveRoads = 0;
+                let liveOpt = null, liveRoads = 0, liveSquare = 0;
                 let baselineNote = 'no road data for the current city';
                 if (input.roadTiles && input.roadTiles.length) {
                     try {
@@ -4120,6 +4254,7 @@ CityBuilder.WorkerCode = `class CityOptimizerBrowser {
                                 addToFront(r);
                                 liveOpt = live;
                                 liveRoads = r.stats.roads;
+                                liveSquare = r.stats.square;
                                 baselineNote = r.stats.roads + ' road tiles, complete - used as the floor';
 
                                 // --- phase 0b: shave the player's own layout ---
@@ -4400,12 +4535,19 @@ CityBuilder.WorkerCode = `class CityOptimizerBrowser {
                     if (!r || !optOf.has(r) || targets.some(t => t.from === r)) continue;
                     targets.push({ opt: optOf.get(r), from: r });
                 }
-                // the live city weighs as much as all the generated plans together
-                const weight = (t) => t.live ? Math.max(1, targets.length - 1) : 1;
+                // the live city gets twice what all the generated plans get
+                // together: it is the plan a player can actually carry out, and
+                // on a real city the search there kept improving well past half
+                // the phase (108 to 113 road tiles from one run to the next)
+                const weight = (t) => t.live ? 2 * Math.max(1, targets.length - 1) : 1;
                 const weights = targets.reduce((s, t) => s + weight(t), 0);
                 let lnsSeed = 1;
                 for (const t of targets) {
-                    const until = elapsed() + Math.min(remaining(), lnsTotal * weight(t) / weights);
+                    const slice = Math.min(remaining(), lnsTotal * weight(t) / weights);
+                    const end = elapsed() + slice;
+                    // the tail of each slice tidies the spare space up - a
+                    // second or two is usually all it takes
+                    const until = end - Math.min(4000, slice * 0.25);
                     let saved = 0, tries = 0, kept = 0;
                     try {
                         // in slices, so a stop lands and the progress bar moves
@@ -4420,18 +4562,36 @@ CityBuilder.WorkerCode = `class CityOptimizerBrowser {
                         }
                         // one trace line for the whole phase, not one per slice
                         t.opt.mark('ruinRecreate', tries + ' patches, ' + kept + ' kept, ' + saved + ' road tiles saved');
+
+                        // Then gather the loose free tiles into a bigger square.
+                        // The road count cannot move - only roadless buildings
+                        // do - so this never trades away what the phase above
+                        // won, it only makes the spare space usable.
+                        let tidy = null;
+                        if (!stopRequested && remaining() > 0) {
+                            tidy = t.opt.tidySquare(Math.max(500, Math.min(remaining(), end - elapsed())));
+                            t.opt.mark('tidySquare', 'square ' + tidy.from + ' -> ' + tidy.to
+                                + (tidy.steps.length ? ', ' + tidy.steps.map(s => s.size + ':' + s.moved).join(' ') + ' buildings moved' : ''));
+                        }
+
                         const r = t.opt.measure(0);
                         if (!isComplete(r)) continue;
                         r.stats.lns = { tries: tries, kept: kept, saved: saved };
+                        if (tidy && tidy.to > tidy.from) r.stats.tidy = { from: tidy.from, to: tidy.to, steps: tidy.steps };
                         if (t.live) {
                             // carries on from the polished city, so it replaces
-                            // it - but only once it beats the city as it stands
-                            if (r.stats.roads >= liveRoads || (tuned && r.stats.roads >= tuned.stats.roads)) continue;
+                            // it - but only once it beats the city as it stands:
+                            // fewer roads, or the same roads and a bigger square
+                            const better = (o) => r.stats.roads < o.roads
+                                || (r.stats.roads === o.roads && r.stats.square > o.square);
+                            if (!better({ roads: liveRoads, square: liveSquare })
+                                || (tuned && !better(tuned.stats))) continue;
                             r.stats.tunedBaseline = true;
                             tuned = r;
                             if (r.stats.roads < cheapestRoads) cheapestRoads = r.stats.roads;
                             if (beatsBest(r, best, cheapestRoads)) best = r;
-                            baselineNote += '; ruin and recreate took it to ' + r.stats.roads;
+                            baselineNote += '; ruin and recreate took it to ' + r.stats.roads
+                                + (r.stats.tidy ? ', tidying grew the square to ' + r.stats.tidy.to + 'x' + r.stats.tidy.to : '');
                         } else if (saved > 0 || r.stats.square > t.from.stats.square) {
                             if (t.from.stats.reserveAt) r.stats.reserveAt = t.from.stats.reserveAt;
                             noteComplete(r);

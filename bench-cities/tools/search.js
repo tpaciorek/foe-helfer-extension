@@ -47,6 +47,7 @@ if (!files.length) files.push('reports/pacior.json');
                 + ' | wolne ' + String(s.freeTotal).padStart(3)
                 + ' (' + String(s.freeOutside).padStart(3) + ' rozproszonych) | ' + what
                 + (s.lns ? ' | LNS -' + s.lns.saved + ' (' + s.lns.tries + ' latek)' : '')
+                + (s.tidy ? ' | porzadek ' + s.tidy.from + '->' + s.tidy.to : '')
                 + (s.knownHomes ? ' | przesunietych ' + s.moved + '/' + s.knownHomes : ''));
         });
     }

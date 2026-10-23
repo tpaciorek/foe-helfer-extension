@@ -37,6 +37,8 @@
  *                                                               accepts a single id or an array of ids
  *   BuildingMarker.showByName(name)        -> Promise<boolean>  mark all buildings whose name contains `name`
  *   BuildingMarker.showAt(x, y)            -> Promise<boolean>  mark a grid position
+ *   BuildingMarker.showAreas(areas)        -> Promise<boolean>  outline grid rectangles ({x, y, width, length, arrow}),
+ *                                                               e.g. the free spots a building is planned for
  *   BuildingMarker.toggleProvince(provId)  -> Promise<boolean>  add/remove a marker on a battlegrounds sector
  *   BuildingMarker.isProvinceMarked(provId)-> boolean           whether a sector is currently marked
  *   BuildingMarker.hide()                  ->                   remove all markers
@@ -137,6 +139,33 @@ let BuildingMarker = {
 		}
 
 		return BuildingMarker._setMarkers([{ x: gridX, y: gridY }]);
+	},
+
+
+	/**
+	 * Outline one or more grid rectangles of the own city, e.g. the empty spots
+	 * a plan keeps for a building. Unlike the other markers the target has no
+	 * building on it yet, so its footprint is drawn as a diamond on the ground;
+	 * the arrow is only put above the areas that ask for it.
+	 * Replaces all currently active markers.
+	 *
+	 * @param {{x: number, y: number, width: number, length: number, arrow?: boolean, kind?: string}[]} areas Grid rectangles
+	 * @returns {Promise<boolean>} True if the markers could be activated
+	 */
+	showAreas: (areas) => {
+		const list = (Array.isArray(areas) ? areas : [areas]).filter(a => a
+			&& typeof a.x === 'number' && typeof a.y === 'number' && a.width > 0 && a.length > 0);
+
+		if (list.length === 0) {
+			console.warn('[BuildingMarker] showAreas() requires at least one area');
+			return Promise.resolve(false);
+		}
+
+		return BuildingMarker._setMarkers(list.map(a => ({
+			area: { x: a.x, y: a.y, width: a.width, length: a.length },
+			arrow: a.arrow !== false,
+			kind: a.kind || ''
+		})));
 	},
 
 
@@ -270,6 +299,10 @@ let BuildingMarker = {
 
 		for (const marker of markers) {
 			marker.element = BuildingMarker._createArrow();
+			if (marker.area) {
+				marker.outline = BuildingMarker._createOutline(marker.kind);
+				if (!marker.arrow) marker.element.classList.add('building-marker-noarrow');
+			}
 			BuildingMarker._markers.push(marker);
 		}
 
@@ -288,6 +321,9 @@ let BuildingMarker = {
 		for (const marker of BuildingMarker._markers) {
 			if (marker.element) {
 				marker.element.remove();
+			}
+			if (marker.outline) {
+				marker.outline.remove();
 			}
 		}
 
@@ -502,6 +538,10 @@ let BuildingMarker = {
 			return null;
 		}
 
+		if (marker.area) {
+			return marker.area;
+		}
+
 		if (marker.entityId === undefined) {
 			return { x: marker.x - 0.5, y: marker.y - 0.5, width: 1, length: 1 };
 		}
@@ -583,6 +623,26 @@ let BuildingMarker = {
 		BuildingMarker._overlay.appendChild(arrow);
 
 		return arrow;
+	},
+
+
+	/**
+	 * Create the ground outline of an area marker inside the overlay: one SVG
+	 * polygon whose corners are set in viewport pixels every frame.
+	 *
+	 * @param {string} kind Space separated class suffixes for the colour ('', 'alt', 'blocked', 'alt blocked')
+	 * @returns {SVGElement} The outline element
+	 */
+	_createOutline: (kind) => {
+		const ns = 'http://www.w3.org/2000/svg';
+		const svg = document.createElementNS(ns, 'svg');
+		const extra = String(kind || '').split(' ').filter(Boolean).map(k => ' building-marker-area-' + k).join('');
+		svg.setAttribute('class', 'building-marker-area building-marker-hidden' + extra);
+		const polygon = document.createElementNS(ns, 'polygon');
+		svg.appendChild(polygon);
+		BuildingMarker._overlay.appendChild(svg);
+
+		return svg;
 	},
 
 
@@ -686,6 +746,7 @@ let BuildingMarker = {
 	 */
 	_removeMarkerAt: (index) => {
 		BuildingMarker._markers[index].element.remove();
+		if (BuildingMarker._markers[index].outline) BuildingMarker._markers[index].outline.remove();
 		BuildingMarker._markers.splice(index, 1);
 
 		if (BuildingMarker._markers.length === 0) {
@@ -777,6 +838,17 @@ let BuildingMarker = {
 					if (footprint) {
 						const point = scene.isoToScreen(footprint.x + footprint.width / 2, footprint.y + footprint.length / 2);
 						position = { x: point.x, y: point.y, scale: Math.max(0.5, scene._zoomFactor || 1) };
+
+						if (marker.outline) {
+							const corners = [
+								scene.isoToScreen(footprint.x, footprint.y),
+								scene.isoToScreen(footprint.x + footprint.width, footprint.y),
+								scene.isoToScreen(footprint.x + footprint.width, footprint.y + footprint.length),
+								scene.isoToScreen(footprint.x, footprint.y + footprint.length)
+							];
+							marker.outline.firstChild.setAttribute('points',
+								corners.map(c => (rect.left + c.x).toFixed(1) + ',' + (rect.top + c.y).toFixed(1)).join(' '));
+						}
 					}
 				}
 			} catch (e) {
@@ -800,6 +872,9 @@ let BuildingMarker = {
 			}
 
 			marker.element.classList.toggle('building-marker-hidden', !visible);
+			if (marker.outline) {
+				marker.outline.classList.toggle('building-marker-hidden', !position);
+			}
 		}
 
 		BuildingMarker._closeButton.classList.toggle('building-marker-hidden', !(scene || mapView));

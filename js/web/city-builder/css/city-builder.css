@@ -647,6 +647,17 @@ body.foe-helper-popup #CityBuilderBox .map-grid-wrapper {
 	padding: 3px 6px;
 	font-size: 12px;
 }
+.rg-newer {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	background: #20456b;
+	border: 1px solid #3a7ab3;
+	border-radius: 3px;
+	padding: 3px 6px;
+	font-size: 12px;
+}
 .rg-bandbar {
 	display: flex;
 	align-items: center;
@@ -657,6 +668,55 @@ body.foe-helper-popup #CityBuilderBox .map-grid-wrapper {
 	font-size: 12px;
 	opacity: .85;
 	margin-left: auto;
+}
+/* "where does this one go?" - the player names the building, its spots get
+   outlined in red on the game map */
+.rg-seek {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin: 4px 0;
+}
+.rg-seek-label {
+	font-weight: bold;
+	white-space: nowrap;
+}
+.rg-seek-input {
+	flex: 1 1 auto;
+	min-width: 0;
+	padding: 3px 6px;
+	border: 1px solid #ff2a2a;
+	border-radius: 3px;
+	background: #f6ecd2;
+	color: #20160a;
+}
+.rg-seek-result {
+	background: #4a1a12;
+	border: 1px solid #ff2a2a;
+	border-radius: 3px;
+	padding: 3px 8px;
+	margin-bottom: 4px;
+}
+.rg-seek-pos {
+	font-weight: bold;
+	color: #ff8a7a;
+}
+.rg-seek-more,
+.rg-seek-nomark {
+	font-size: 12px;
+	opacity: .85;
+}
+.rg-seek-blocked {
+	color: #ffc43d;
+}
+.rg-seek-none {
+	color: #ff9d9d;
+}
+.rg-seekable {
+	cursor: pointer;
+}
+.rg-seekable:hover {
+	filter: brightness(1.2);
 }
 /* the building to pick up now, spelled out above the list - the number on the
    map says where, never what */
@@ -804,4 +864,37 @@ table.rg-steps tr.rg-blocked .rg-pos {
 	opacity: 1;
 	color: #ffc43d;
 	font-weight: bold;
+}
+/* the buildings on top of the game's reconstruction menu - same blue as
+   their squares on the map */
+.rg-top {
+	background: #10384a;
+	border: 1px solid #40c8ff;
+	border-radius: 3px;
+	padding: 4px 8px;
+	margin-top: 4px;
+}
+.rg-top-title {
+	font-size: 12px;
+	color: #40c8ff;
+	font-weight: bold;
+}
+.rg-top-line {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.rg-top-icon {
+	width: 18px;
+	height: 18px;
+}
+.rg-top-pos {
+	font-weight: bold;
+	color: #40c8ff;
+	white-space: nowrap;
+}
+.rg-top-none,
+.rg-top-off {
+	font-size: 12px;
+	color: #ff9d9d;
 }

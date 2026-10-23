@@ -66,6 +66,49 @@
 	display: none;
 }
 
+/* area markers: an empty spot outlined on the ground, corners set per frame
+   in viewport pixels - so the SVG spans the viewport and never takes a click */
+#BuildingMarkerOverlay .building-marker-area {
+	position: fixed;
+	left: 0;
+	top: 0;
+	width: 100vw;
+	height: 100vh;
+	overflow: visible;
+	pointer-events: none;
+}
+
+#BuildingMarkerOverlay .building-marker-area polygon {
+	fill: rgba(255, 40, 40, 0.18);
+	stroke: #ff2a2a;
+	stroke-width: 4;
+	stroke-linejoin: round;
+	filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.7));
+	animation: building-marker-pulse 1.2s ease-in-out infinite;
+}
+
+/* further spots the same building would fit - quieter than the first one */
+#BuildingMarkerOverlay .building-marker-area-alt polygon {
+	fill: rgba(255, 200, 60, 0.12);
+	stroke: #ffc83d;
+	stroke-width: 2.5;
+	animation: none;
+}
+
+/* a spot something else still stands on: it has to be cleared first */
+#BuildingMarkerOverlay .building-marker-area-blocked polygon {
+	stroke-dasharray: 8 6;
+}
+
+#BuildingMarkerOverlay .building-marker-noarrow {
+	display: none;
+}
+
+@keyframes building-marker-pulse {
+	0%, 100% { stroke-opacity: 1; }
+	50% { stroke-opacity: 0.45; }
+}
+
 /* shared toggle button for other modules (e.g. the battlegrounds live box),
    so every marker trigger looks the same */
 .btn.building-marker-btn {

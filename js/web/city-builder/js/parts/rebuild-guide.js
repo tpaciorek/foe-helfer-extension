@@ -40,6 +40,14 @@ let RebuildGuide = {
     ManualBand: false,
     // the last placement that did not match the plan, shown as a warning
     OffPlan: null,
+    // the building the player looked up ("where does this go?"):
+    // {a, n, w, h, s, t}. Its free spots are outlined on the game map until the
+    // player clears it - a building often comes in many copies, so it stays
+    // picked while they put them down one by one
+    Seek: null,
+    // the markers on the game map are the guide's - only then may it take them
+    // down again, another module may have put its own arrows there
+    SeekMarked: false,
 
 
     /**
@@ -188,6 +196,24 @@ let RebuildGuide = {
 
 
     /**
+     * The variant the City Builder shows for our own city when it is not the
+     * stored plan. The plan is only replaced on request, so after a new search
+     * the guide would otherwise keep walking the old one without a word.
+     *
+     * @returns {string|null} escaped label of that variant, null when there is none
+     */
+    NewerShown: () => {
+        if (typeof CityBuilder === 'undefined' || !RebuildGuide.Plan) return null;
+        // Stats is only set by a search - a plan drawn on its own has none
+        if (!CityBuilder.Stats || CityBuilder.SearchMap !== 'main') return null;
+        const shown = CityBuilder.Data || [];
+        if (!shown.length || RebuildGuide.Signature(shown) === RebuildGuide.Plan.sig) return null;
+        return (CityBuilder.VariantLabel && CityBuilder.VariantLabel(CityBuilder.VariantIndex))
+            || i18n('Boxes.RebuildGuide.NewerShownPlain');
+    },
+
+
+    /**
      * Forgets the plan - after the rebuild, or when it turned out to be the
      * wrong one.
      */
@@ -195,6 +221,9 @@ let RebuildGuide = {
         RebuildGuide.Plan = null;
         RebuildGuide.Steps = [];
         RebuildGuide.OffPlan = null;
+        RebuildGuide.Seek = null;
+        if (RebuildGuide.SeekMarked && typeof BuildingMarker !== 'undefined') BuildingMarker.hide();
+        RebuildGuide.SeekMarked = false;
         try { localStorage.removeItem(RebuildGuide.StorageKey()); } catch (e) { /* nothing to clean up */ }
         RebuildGuide.Render();
         if (typeof CityBuilder !== 'undefined' && $('#city-builder-canvas').length) CityBuilder.Renderer.render();
@@ -389,6 +418,180 @@ let RebuildGuide = {
 
 
     /**
+     * The building on top of each tab of the game's reconstruction menu, and
+     * the spot it belongs on. The game says nothing when a building is lifted,
+     * but the size list already mirrors the menu's order (`reconstruction.pages`,
+     * newest stored first) - and the top of a tab is what the player takes.
+     *
+     * @returns {Array<Object>|null} [{page, n, w, h, spot}], null when the size list is off
+     */
+    TopOfList: () => {
+        if (typeof reconstruction === 'undefined' || !reconstruction.pages) return null;
+
+        const open = RebuildGuide.Steps.filter(s => s.state !== 'done' && s.t !== 'street');
+        const taken = new Set();
+        const out = [];
+        for (const page of ['prod', 'happ', 'greatbuilding']) {
+            const id = (reconstruction.pages[page] || [])[0];
+            if (!id) continue;
+            const asset = id.split('#')[0];
+            const m = RebuildGuide.Meta(asset);
+            if (!m || m.t === 'street') continue;
+            const rec = { a: asset, t: m.t, w: m.w, h: m.h, s: m.s };
+            // two tabs can top out with the same footprint - each gets its own spot
+            const fit = open.filter(s => !taken.has(s) && RebuildGuide.Fits(rec, s));
+            const spot = fit.find(s => s.band === RebuildGuide.Band && s.state === 'todo')
+                || fit.find(s => s.state === 'todo')
+                || fit[0]
+                || null;
+            if (spot) taken.add(spot);
+            out.push({ page: page, a: asset, n: m.n, w: m.w, h: m.h, spot: spot });
+        }
+        return out;
+    },
+
+
+    /**
+     * Squares around the spots of the buildings on top of the game's list: a
+     * thick outline in a colour no stripe state uses, half a tile wider than
+     * the spot so a 1x1 still shows.
+     *
+     * @param {CanvasRenderingContext2D} ctx
+     * @param {number} u - pixels per tile
+     */
+    PaintTop: (ctx, u) => {
+        const top = RebuildGuide.TopOfList();
+        if (!top) return;
+        const pad = Math.max(3, Math.round(u * 0.5));
+        for (const t of top) {
+            const s = t.spot;
+            if (!s) continue;
+            const bx = s.x * u, by = s.y * u, bw = s.w * u, bh = s.h * u;
+            ctx.fillStyle = 'rgba(64, 200, 255, 0.45)';
+            ctx.fillRect(bx, by, bw, bh);
+            ctx.lineWidth = Math.max(2, Math.round(u / 4));
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.strokeRect(bx - pad, by - pad, bw + 2 * pad, bh + 2 * pad);
+            ctx.lineWidth = Math.max(1.5, Math.round(u / 6));
+            ctx.strokeStyle = '#40c8ff';
+            ctx.strokeRect(bx - pad, by - pad, bw + 2 * pad, bh + 2 * pad);
+        }
+    },
+
+
+    /**
+     * Every building the player can pick up in reconstruction mode, once per
+     * name and size, for the suggestions of the search box. Read from the city,
+     * not from the plan: a building without a spot in the plan is lifted just
+     * the same, and the answer for it is "no spot".
+     *
+     * @returns {Array<Object>} [{key, a, n, w, h, s, t}] sorted by name
+     */
+    SeekOptions: () => {
+        const seen = new Map();
+        const cityMap = (typeof MainParser !== 'undefined' && MainParser.CityMapData) || {};
+        for (const inst of Object.values(cityMap)) {
+            if (!inst) continue;
+            const a = inst.cityentity_id || inst.entityId;
+            const m = RebuildGuide.Meta(a, inst.type);
+            if (!m || m.t === 'street' || m.t === 'main_building' || !m.n) continue;
+            const key = m.n + ' (' + m.h + '×' + m.w + ')';
+            if (!seen.has(key)) seen.set(key, { key: key, a: a, n: m.n, w: m.w, h: m.h, s: m.s, t: m.t });
+        }
+        return [...seen.values()].sort((x, y) => x.n.localeCompare(y.n));
+    },
+
+
+    /**
+     * The open spots of the plan the looked-up building fits, best first: the
+     * current band, then the guide's order, spots with something still standing
+     * on them last - those have to be cleared before they can be used.
+     *
+     * @returns {Array<Object>} plan steps
+     */
+    SeekSpots: () => {
+        const k = RebuildGuide.Seek;
+        if (!k) return [];
+        const fit = RebuildGuide.Steps.filter(s => s.state !== 'done' && s.t !== 'street' && RebuildGuide.Fits(k, s));
+        const rank = (s) => (s.state === 'blocked' ? 2 : 0) + (s.band === RebuildGuide.Band ? 0 : 1);
+        // Steps are already in the guide's order, and the sort is stable
+        return fit.slice().sort((x, y) => rank(x) - rank(y));
+    },
+
+
+    /**
+     * Looks a building up: remembers it, outlines its spots on the game map and
+     * redraws the guide.
+     *
+     * @param {Object|null} rec - {a, n, w, h, s, t}, null clears the search
+     */
+    SeekSet: (rec) => {
+        RebuildGuide.Seek = rec ? { a: rec.a, n: rec.n, w: rec.w, h: rec.h, s: rec.s || 0, t: rec.t } : null;
+        RebuildGuide.MarkSeek();
+        RebuildGuide.Render();
+        if (typeof CityBuilder !== 'undefined' && $('#city-builder-canvas').length) CityBuilder.Renderer.render();
+    },
+
+
+    /**
+     * Same as SeekSet, for a building known only by its asset id - the lines of
+     * the guide that name a building pass that on.
+     *
+     * @param {string} assetId
+     */
+    SeekAsset: (assetId) => {
+        const m = RebuildGuide.Meta(assetId);
+        if (!m || m.t === 'street') return;
+        RebuildGuide.SeekSet({ a: assetId, n: m.n, w: m.w, h: m.h, s: m.s, t: m.t });
+    },
+
+
+    /**
+     * Outlines the spots of the looked-up building on the game map: the first
+     * one pulses and gets the arrow, up to seven more are drawn quieter. The
+     * map projection needs the engine capture of BuildingMarker, which Firefox
+     * does not have - there only the coordinates and the plan map remain.
+     */
+    MarkSeek: () => {
+        if (typeof BuildingMarker === 'undefined' || !BuildingMarker.supported) return;
+        const spots = RebuildGuide.SeekSpots().slice(0, 8);
+        if (!spots.length) {
+            if (RebuildGuide.SeekMarked) BuildingMarker.hide();
+            RebuildGuide.SeekMarked = false;
+            return;
+        }
+        RebuildGuide.SeekMarked = true;
+        BuildingMarker.showAreas(spots.map((s, i) => ({
+            x: s.x, y: s.y, width: s.w, length: s.h,
+            arrow: i === 0,
+            kind: (i === 0 ? '' : 'alt') + (s.state === 'blocked' ? ' blocked' : '')
+        })));
+    },
+
+
+    /**
+     * The spots of the looked-up building on the plan map and the overlay, in
+     * the same colours as on the game map: red for the first, yellow for the rest.
+     *
+     * @param {CanvasRenderingContext2D} ctx
+     * @param {number} u - pixels per tile
+     */
+    PaintSeek: (ctx, u) => {
+        const spots = RebuildGuide.SeekSpots();
+        if (!spots.length) return;
+        const pad = Math.max(2, Math.round(u * 0.35));
+        spots.forEach((s, i) => {
+            const bx = s.x * u, by = s.y * u, bw = s.w * u, bh = s.h * u;
+            ctx.fillStyle = i === 0 ? 'rgba(255, 42, 42, 0.5)' : 'rgba(255, 200, 61, 0.35)';
+            ctx.fillRect(bx, by, bw, bh);
+            ctx.lineWidth = Math.max(2, Math.round(u / (i === 0 ? 3 : 5)));
+            ctx.strokeStyle = i === 0 ? '#ff2a2a' : '#ffc83d';
+            ctx.strokeRect(bx - pad, by - pad, bw + 2 * pad, bh + 2 * pad);
+        });
+    },
+
+
+    /**
      * @returns {number|null} the first band that is not finished yet
      */
     FirstOpenBand: () => {
@@ -558,8 +761,8 @@ let RebuildGuide = {
             }
         }
 
-        // the skewed overlay is the whole point here, not the top-down view
-        localStorage.setItem('CityBuilderFlatView', '0');
+        // the view stays the player's choice - "top-down" is a checkbox of its
+        // own, switching it behind their back left them with a skewed map
         CityBuilder.showMap();
     },
 
@@ -572,6 +775,8 @@ let RebuildGuide = {
     Refresh: () => {
         if (!RebuildGuide.Steps.length) return;
         RebuildGuide.Evaluate();
+        // a spot just filled is no longer free - the outline moves on to the next
+        if (RebuildGuide.Seek) RebuildGuide.MarkSeek();
         RebuildGuide.Render();
         RebuildGuide.AnnotateList();
         // the plan overlay paints the same states, so it has to follow along
@@ -643,6 +848,12 @@ let RebuildGuide = {
         h.push('</div>');
         h.push('</div>');
 
+        const newer = RebuildGuide.NewerShown();
+        if (newer) {
+            h.push(`<div class="rg-newer"><span>${i18n('Boxes.RebuildGuide.NewerShown')}: <b>${newer}</b></span>`
+                + `<button class="btn btn-slim rg-take">${i18n('Boxes.RebuildGuide.TakeShown')}</button></div>`);
+        }
+
         const extra = RebuildGuide.Extra();
         if (extra.length) {
             const total = extra.reduce((a, e) => a + e.count, 0);
@@ -666,11 +877,48 @@ let RebuildGuide = {
         h.push(`<span class="rg-open">${open ? open + ' ' + i18n('Boxes.RebuildGuide.Left') : i18n('Boxes.RebuildGuide.BandDone')}</span>`);
         h.push('</div>');
 
+        // "where does this one go?": the game says nothing when a building is
+        // picked up, so the player names it - typed with suggestions, or by
+        // clicking a building the guide shows - and its spots get outlined
+        const seek = RebuildGuide.Seek;
+        h.push('<div class="rg-seek">');
+        h.push(`<label class="rg-seek-label" for="rg-seek-input">${i18n('Boxes.RebuildGuide.Seek')}</label>`);
+        h.push(`<input type="text" id="rg-seek-input" class="rg-seek-input" list="rg-seek-list" autocomplete="off"`
+            + ` placeholder="${RebuildGuide.Escape(i18n('Boxes.RebuildGuide.SeekPlaceholder'))}"`
+            + ` value="${seek ? RebuildGuide.Escape(seek.n + ' (' + seek.h + '×' + seek.w + ')') : ''}">`);
+        h.push('<datalist id="rg-seek-list">');
+        for (const o of RebuildGuide.SeekOptions()) h.push(`<option value="${RebuildGuide.Escape(o.key)}"></option>`);
+        h.push('</datalist>');
+        if (seek) h.push(`<button class="btn btn-slim rg-seek-clear" title="${i18n('Boxes.RebuildGuide.SeekClear')}">&times;</button>`);
+        h.push('</div>');
+        if (seek) {
+            const spots = RebuildGuide.SeekSpots();
+            if (!spots.length) {
+                h.push(`<div class="rg-seek-result rg-seek-none">${i18n('Boxes.RebuildGuide.SeekNone')}</div>`);
+            } else {
+                const first = spots[0];
+                h.push('<div class="rg-seek-result">');
+                h.push(`<span class="rg-seek-pos">&rarr; ${first.x}, ${first.y}</span>`);
+                if (first.state === 'blocked' && first.blocker) {
+                    h.push(` <span class="rg-seek-blocked">${i18n('Boxes.RebuildGuide.Blocked')}: <b>${RebuildGuide.Escape(first.blocker.n)}</b></span>`);
+                }
+                if (spots.length > 1) {
+                    h.push(` <span class="rg-seek-more">${i18n('Boxes.RebuildGuide.SeekMore').replace('__n__', spots.length - 1)}</span>`);
+                }
+                if (typeof BuildingMarker === 'undefined' || !BuildingMarker.supported) {
+                    h.push(`<div class="rg-seek-nomark">${i18n('Boxes.RebuildGuide.SeekNoMarker')}</div>`);
+                }
+                h.push('</div>');
+            }
+        }
+
         // the one building to pick up now, spelled out: a number on the map
         // says where, it never says what to carry there
         const next = steps.find(s => s.state !== 'done');
         if (next) {
-            h.push('<div class="rg-now">');
+            h.push(next.t === 'street'
+                ? '<div class="rg-now">'
+                : `<div class="rg-now rg-seekable" data-asset="${RebuildGuide.Escape(next.a)}" title="${i18n('Boxes.RebuildGuide.SeekClick')}">`);
             h.push(`<span class="rg-now-no">1</span>`);
             h.push(`<span class="rg-now-size">${next.h}&times;${next.w}</span>`);
             h.push(`<span class="rg-now-name">${RebuildGuide.Label(next)}</span>`);
@@ -680,6 +928,28 @@ let RebuildGuide = {
                 h.push(`<div class="rg-now-blocked">${i18n('Boxes.RebuildGuide.Blocked')}: `
                     + `<b>${RebuildGuide.Escape(next.blocker.n)}</b></div>`);
             }
+        }
+
+        // what the game's menu offers right now, and where each of those goes -
+        // the same blue as their squares on the map
+        const top = RebuildGuide.TopOfList();
+        if (top === null) {
+            h.push(`<div class="rg-top-off">${i18n('Boxes.RebuildGuide.TopOfListOff')}</div>`);
+        } else if (top.length) {
+            h.push('<div class="rg-top">');
+            h.push(`<div class="rg-top-title">${i18n('Boxes.RebuildGuide.TopOfList')}</div>`);
+            for (const t of top) {
+                const icon = reconstruction.rcIcons && reconstruction.rcIcons[t.page];
+                h.push(`<div class="rg-top-line rg-seekable" data-asset="${RebuildGuide.Escape(t.a)}" title="${i18n('Boxes.RebuildGuide.SeekClick')}">`);
+                if (icon) h.push(`<img class="rg-top-icon" src="${icon}" alt="">`);
+                h.push(`<span class="rg-now-size">${t.h}&times;${t.w}</span>`);
+                h.push(`<span class="rg-now-name">${RebuildGuide.Escape(t.n)}</span>`);
+                h.push(t.spot
+                    ? `<span class="rg-top-pos">&rarr; ${t.spot.x}, ${t.spot.y}</span>`
+                    : `<span class="rg-top-none">${i18n('Boxes.RebuildGuide.TopNoSpot')}</span>`);
+                h.push('</div>');
+            }
+            h.push('</div>');
         }
 
         // the list before the map: it is the part that says what to place, and
@@ -744,6 +1014,29 @@ let RebuildGuide = {
                 map.addEventListener('mouseleave', () => { if (read) read.textContent = ''; });
             }
 
+            // a suggestion picked from the list arrives as an input event with
+            // the full text - typing by hand counts once it names one building
+            $('#RebuildGuideBoxBody .rg-seek-input').on('input change', function () {
+                const v = String($(this).val() || '').trim();
+                const opts = RebuildGuide.SeekOptions();
+                let hit = opts.find(o => o.key === v) || null;
+                if (!hit && v.length >= 3) {
+                    const low = v.toLowerCase();
+                    const named = opts.filter(o => o.n.toLowerCase() === low);
+                    if (named.length === 1) hit = named[0];
+                }
+                const cur = RebuildGuide.Seek;
+                if (hit && (!cur || cur.a !== hit.a || cur.w !== hit.w || cur.h !== hit.h)) {
+                    RebuildGuide.SeekSet(hit);
+                }
+            }).on('keydown', function (e) {
+                if (e.key === 'Escape') RebuildGuide.SeekSet(null);
+            });
+            $('#RebuildGuideBoxBody .rg-seek-clear').on('click', () => RebuildGuide.SeekSet(null));
+            $('#RebuildGuideBoxBody .rg-seekable').on('click', function () {
+                RebuildGuide.SeekAsset(String($(this).attr('data-asset')));
+            });
+
             $('#RebuildGuideBoxBody .rg-prev').on('click', () => RebuildGuide.GoTo(RebuildGuide.Band - 1));
             $('#RebuildGuideBoxBody .rg-next').on('click', () => RebuildGuide.GoTo(RebuildGuide.Band + 1));
             $('#RebuildGuideBoxBody .rg-jump').on('click', () => {
@@ -754,6 +1047,7 @@ let RebuildGuide = {
             });
             $('#RebuildGuideBoxBody .rg-oncity').on('click', () => RebuildGuide.ShowOnCity());
             $('#RebuildGuideBoxBody .rg-drop').on('click', () => RebuildGuide.Drop());
+            $('#RebuildGuideBoxBody .rg-take').on('click', () => RebuildGuide.UsePlan());
 
             $('#RebuildGuideBoxBody .rg-order').on('change', function () {
                 localStorage.setItem('RebuildGuideOrder', $(this).val());
@@ -896,6 +1190,8 @@ let RebuildGuide = {
             }
         }
 
+        RebuildGuide.PaintTop(ctx, u);
+        RebuildGuide.PaintSeek(ctx, u);
         RebuildGuide.ScrollToStep(canvas);
     },
 
@@ -1031,6 +1327,9 @@ let RebuildGuide = {
                 ctx.fillRect(bx, by, bw, bh);
             }
         }
+
+        RebuildGuide.PaintTop(ctx, unit);
+        RebuildGuide.PaintSeek(ctx, unit);
     },
 
 
@@ -1079,8 +1378,9 @@ FoEproxy.addHandler('CityReconstructionService', 'getDraft', (data) => {
     if (!RebuildGuide.Plan && !RebuildGuide.Load()) return;
     RebuildGuide.Open();
     RebuildGuide.Refresh();
-    // the size list is built right after this handler
-    setTimeout(RebuildGuide.AnnotateList, 400);
+    // the size list - and the menu order the squares are read from - is built
+    // right after this handler
+    setTimeout(RebuildGuide.Refresh, 400);
 });
 
 
@@ -1113,6 +1413,9 @@ FoEproxy.addRequestHandler('CityReconstructionService', 'saveDraft', (data) => {
     }
 
     RebuildGuide.Refresh();
+    // the size list moves the menu order in its own handler for this request,
+    // which may run after this one - read the top of the list once it has
+    setTimeout(RebuildGuide.Refresh, 0);
 });
 
 

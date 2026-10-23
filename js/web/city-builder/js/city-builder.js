@@ -38,6 +38,9 @@ let CityBuilder = {
     // the road tolerance deciding the trade for them
     Variants: [],
     VariantIndex: 0,
+    // the map the last search ran on - a layout of another player's city must
+    // never be offered to the rebuild guide as a newer plan for our own
+    SearchMap: null,
     // Facts about the search itself - how many variants it tried, how long it
     // took, what it made of the live city. They belong to the run, not to the
     // layout on screen: reading them off the selected variant made the report
@@ -499,6 +502,10 @@ let CityBuilder = {
         if (typeof Tooltips !== 'undefined') Tooltips.deactivate();
 
         CityBuilder.showMap();
+
+        // an open guide says whether the variant on screen is the one it
+        // carries out - that answer changes with every switch
+        if (typeof RebuildGuide !== 'undefined' && $('#RebuildGuideBox').length) RebuildGuide.Render();
     },
 
 
@@ -1054,6 +1061,7 @@ ${variants.map(panel).join('\n')}
                     + (vs.baseline ? 'your own layout'
                         : (vs.tunedBaseline ? 'your own layout, polished' : ('town hall ' + (vs.placement || 'top-left'))))
                     + (vs.lns ? ' | ruin & recreate -' + vs.lns.saved + ' (' + vs.lns.tries + ' patches)' : '')
+                    + (vs.tidy ? ' | tidied square ' + vs.tidy.from + ' -> ' + vs.tidy.to : '')
                     + (vs.knownHomes ? ' | moved ' + vs.moved + '/' + vs.knownHomes : ''));
             });
         }
@@ -1963,6 +1971,7 @@ ${variants.map(panel).join('\n')}
         else if (ActiveMap === 'cultural_outpost') mapData = CityMap.CulturalOutpost.data;
         // another player's city is the same kind of data, just not ours
         else if (ActiveMap === 'OtherPlayer') mapData = CityMap.OtherPlayer.mapData;
+        CityBuilder.SearchMap = ActiveMap;
 
         if (!mapData || typeof mapData !== 'object' || !entities || typeof entities !== 'object') {
             console.error("Daten nicht gefunden oder ungültig!", {mapData, entities, ActiveMap});
@@ -2205,7 +2214,6 @@ if (!buildingsInput.length) {
             // switchable
             CityBuilder.Variants = result.variants;
             CityBuilder.applyVariant(result.variantIndex || 0);
-            if (typeof RebuildGuide !== 'undefined' && $('#RebuildGuideBox').length) RebuildGuide.Render();
         }
         else if (result.incomplete) {
             // a layout missing buildings cannot be rebuilt in the game, so it
