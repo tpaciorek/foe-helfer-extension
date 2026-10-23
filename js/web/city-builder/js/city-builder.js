@@ -1051,7 +1051,10 @@ ${variants.map(panel).join('\n')}
                     + String(vs.roads).padStart(4) + ' roads | square ' + vs.square + 'x' + vs.square
                     + ' | free ' + String(vs.freeTotal).padStart(3)
                     + ' (' + String(vs.freeOutside).padStart(3) + ' scattered) | '
-                    + (vs.baseline ? 'your own layout' : ('town hall ' + (vs.placement || 'top-left'))));
+                    + (vs.baseline ? 'your own layout'
+                        : (vs.tunedBaseline ? 'your own layout, polished' : ('town hall ' + (vs.placement || 'top-left'))))
+                    + (vs.lns ? ' | ruin & recreate -' + vs.lns.saved + ' (' + vs.lns.tries + ' patches)' : '')
+                    + (vs.knownHomes ? ' | moved ' + vs.moved + '/' + vs.knownHomes : ''));
             });
         }
 

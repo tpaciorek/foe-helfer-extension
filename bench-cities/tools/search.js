@@ -45,7 +45,9 @@ if (!files.length) files.push('reports/pacior.json');
             console.log('   ' + (i === d.variantIndex ? '>' : ' ') + ' ' + String(s.roads).padStart(4)
                 + ' drog | kwadrat ' + String(s.square).padStart(2) + 'x' + s.square
                 + ' | wolne ' + String(s.freeTotal).padStart(3)
-                + ' (' + String(s.freeOutside).padStart(3) + ' rozproszonych) | ' + what);
+                + ' (' + String(s.freeOutside).padStart(3) + ' rozproszonych) | ' + what
+                + (s.lns ? ' | LNS -' + s.lns.saved + ' (' + s.lns.tries + ' latek)' : '')
+                + (s.knownHomes ? ' | przesunietych ' + s.moved + '/' + s.knownHomes : ''));
         });
     }
 })();

@@ -8,13 +8,18 @@ const path = require('path');
 const vm = require('vm');
 const { performance } = require('perf_hooks');
 
-const SRC = path.join(__dirname, '..', '..', 'js', 'web', 'city-builder', 'js', 'city-builder.js');
+// the worker lives in its own part file, assigned as CityBuilder.WorkerCode
+// WORKER_SRC points at another copy, to A/B a change against the old code
+const SRC = process.env.WORKER_SRC
+    || path.join(__dirname, '..', '..', 'js', 'web', 'city-builder', 'js', 'parts', 'worker.js');
 
 function workerSource() {
     const raw = fs.readFileSync(SRC, 'utf8');
-    const start = raw.indexOf('WorkerCode: `') + 'WorkerCode: '.length;
-    const end = raw.lastIndexOf('`,');
-    if (start < 'WorkerCode: '.length || end < 0) throw new Error('WorkerCode literal not found in ' + SRC);
+    const tag = 'WorkerCode = ';
+    const at = raw.indexOf(tag + '`');
+    const start = at + tag.length;
+    const end = raw.lastIndexOf('`;');
+    if (at < 0 || end < 0) throw new Error('WorkerCode literal not found in ' + SRC);
     return eval(raw.slice(start, end + 1));
 }
 

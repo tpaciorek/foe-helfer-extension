@@ -44,9 +44,22 @@ Use it to judge a heuristic.
 switcher would show. Use it to judge the search as a whole — a heuristic that
 looks good in `bench.js` can still lose because the budget goes elsewhere.
 
-Both work by extracting the `WorkerCode:` template literal from
-`js/web/city-builder/js/city-builder.js` and evaluating it in a `vm` context, so
-they always test the current source with no build step.
+    node tools/lns.js reports/pacior.json --ms=20000 --live   # ruin & recreate alone
+
+`lns.js` lays out the best seed-0 district corner, then runs the ruin-and-recreate
+pass on it for a fixed time and prints roads before and after. `--live` also
+fakes a live city (a `bands` layout fed back as "the city as it stands") and runs
+it through what the worker does to a real one: prune + relocate, then the LNS.
+
+All of them extract the `CityBuilder.WorkerCode` template literal from
+`js/web/city-builder/js/parts/worker.js` and evaluate it in a `vm` context, so
+they always test the current source with no build step. To A/B a change, copy the
+old worker somewhere and point `WORKER_SRC` at it:
+
+    WORKER_SRC=/tmp/worker-old.js node tools/search.js reports/rigunia.json
+
+Running several searches at once slows each of them down, and the 90 s search
+is decided by how many runs fit in it - compare versions under the same load.
 
 ## The cities
 
