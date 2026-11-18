@@ -25,6 +25,8 @@
  * Markers are dismissed by the player either by clicking a marked building's
  * footprint on the map (removes that marker) or via the close button that is
  * shown below the diamonds in the top right corner (removes all markers).
+ * Area markers (showAreas) are not dismissed by a click into them: that
+ * click is the player placing a building there.
  *
  * Besides the city, the module supports the Guild Battlegrounds map: province
  * markers point at a sector's flag and are toggled per province. City markers
@@ -718,6 +720,16 @@ let BuildingMarker = {
 
 		for (let i = 0; i < BuildingMarker._markers.length; i++) {
 			const marker = BuildingMarker._markers[i];
+
+			// An area marks an empty spot to put a building on - clicking into it
+			// is the player placing there, not dismissing it. When the building
+			// does not fit (neighbours too close) the game places nothing and
+			// says nothing, so a dismissed outline was simply gone. Its owner
+			// takes it down once the spot is really filled.
+			if (marker.area) {
+				continue;
+			}
+
 			const footprint = BuildingMarker._resolveFootprint(marker);
 
 			if (!footprint) {

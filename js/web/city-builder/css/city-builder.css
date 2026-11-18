@@ -713,8 +713,6 @@ body.foe-helper-popup #CityBuilderBox .map-grid-wrapper {
 #RebuildGuideBoxBody.rg-compact-mode .rg-top,
 #RebuildGuideBoxBody.rg-compact-mode .rg-top-off,
 #RebuildGuideBoxBody.rg-compact-mode .rg-steps-wrap,
-#RebuildGuideBoxBody.rg-compact-mode .rg-mapwrap,
-#RebuildGuideBoxBody.rg-compact-mode .rg-read,
 #RebuildGuideBoxBody.rg-compact-mode .rg-foot,
 #RebuildGuideBoxBody.rg-compact-mode .rg-hint {
 	display: none;
@@ -893,7 +891,13 @@ body.foe-helper-popup #CityBuilderBox .map-grid-wrapper {
 }
 .rg-map {
 	display: block;
-	cursor: crosshair;
+	/* the plan is moved by dragging it */
+	cursor: grab;
+}
+.rg-mapwrap.rg-dragging,
+.rg-mapwrap.rg-dragging .rg-map {
+	cursor: grabbing;
+	user-select: none;
 }
 /* what the cursor is on, spelled out - the native tooltip needs the mouse to
    rest and is gone again before it can be read */
@@ -1019,4 +1023,75 @@ table.rg-steps tr.rg-blocked .rg-pos {
 .rg-top-off {
 	font-size: 12px;
 	color: #ff9d9d;
+}
+
+/* no free spot left: the road spots a roadless building holds */
+.rg-seek-reclaim-title {
+	margin-top: 3px;
+	color: #ffc43d;
+}
+.rg-seek-reclaim {
+	font-size: 12px;
+}
+
+/* short view: search and map - the map takes what is left of the box */
+#RebuildGuideBoxBody.rg-compact-mode .rg-mapwrap {
+	max-height: none;
+	flex: 1 1 auto;
+	min-height: 160px;
+}
+/* plan variants: one compact row each, label over the numbers */
+.rg-variants-list {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin: 3px 0;
+}
+.rg-v-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 3px 6px;
+	border-radius: 3px;
+	background: rgba(0, 0, 0, 0.18);
+}
+.rg-v-row.rg-v-current {
+	background: rgba(70, 235, 70, 0.14);
+}
+.rg-v-text {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+.rg-v-label {
+	font-weight: bold;
+}
+.rg-v-facts {
+	font-size: 12px;
+	opacity: .85;
+}
+.rg-v-act {
+	flex: 0 0 auto;
+	white-space: nowrap;
+}
+
+/* crooked buildings: where they lie (red) and where they belong (green) */
+.rg-misplaced {
+	background: #4a1212;
+	border: 2px solid #ff2a2a;
+	border-radius: 3px;
+	padding: 3px 8px;
+}
+.rg-misplaced-title {
+	font-weight: bold;
+	color: #ff8a7a;
+}
+.rg-misplaced-line {
+	cursor: pointer;
+}
+.rg-mis-at {
+	color: #ff8a7a;
+}
+.rg-mis-to {
+	color: #7dff7d;
+	font-weight: bold;
 }

@@ -40,13 +40,19 @@ let RebuildGuide = {
     ManualBand: false,
     // the last placement that did not match the plan, shown as a warning
     OffPlan: null,
+    // buildings put down in reconstruction mode off every spot of the plan,
+    // each with the spot it should go to: [{rec, target}]
+    Misplaced: [],
     // the building the player looked up ("where does this go?"):
     // {a, n, w, h, s, t}. Its free spots are outlined on the game map until the
     // player clears it - a building often comes in many copies, so it stays
     // picked while they put them down one by one
     Seek: null,
     // whether the variant list of the guide is unfolded - kept across redraws
-    VariantsOpen: true,
+    VariantsOpen: false,
+    // where the player dragged the plan map to; while set, a redraw keeps
+    // that view instead of jumping back to the current step
+    MapScroll: null,
     // the markers on the game map are the guide's - only then may it take them
     // down again, another module may have put its own arrows there
     SeekMarked: false,
@@ -403,11 +409,11 @@ let RebuildGuide = {
         const tiles = new Map();
         const cityMap = (typeof MainParser !== 'undefined' && MainParser.CityMapData) || {};
 
-        const add = (id, inst, px, py) => {
+        const add = (id, inst, px, py, placed) => {
             const assetId = inst.cityentity_id || inst.entityId;
             const m = RebuildGuide.Meta(assetId, inst.type);
             if (!m) return;
-            const rec = { id: id, a: assetId, t: m.t, x: px, y: py, w: m.w, h: m.h, n: m.n, s: m.s };
+            const rec = { id: id, a: assetId, t: m.t, x: px, y: py, w: m.w, h: m.h, n: m.n, s: m.s, placed: !!placed };
             for (let i = 0; i < m.w; i++) {
                 for (let j = 0; j < m.h; j++) tiles.set((px + i) + ',' + (py + j), rec);
             }
@@ -425,7 +431,7 @@ let RebuildGuide = {
             if (d) {
                 if (!d.position) continue;
                 // the game leaves out a coordinate that is zero
-                add(id, inst, parseInt(d.position.x) || 0, parseInt(d.position.y) || 0);
+                add(id, inst, parseInt(d.position.x) || 0, parseInt(d.position.y) || 0, true);
                 continue;
             }
             const rx = inst.x !== undefined ? inst.x : inst.coords?.x;
@@ -459,6 +465,33 @@ let RebuildGuide = {
 
 
     /**
+     * How much road a building leaves unused on a spot: a roadless building on
+     * a spot planned with a road. It fits, but it takes the spot from a
+     * building that needs the road - so every choice of spot prefers zero.
+     *
+     * @param {Object} rec - the building
+     * @param {Object} step - the plan item
+     * @returns {number}
+     */
+    RoadWaste: (rec, step) => Math.max(0, (step.s || 0) - (rec.s || 0)),
+
+
+    /**
+     * Spots the looked-up building could have, held by a building that needs
+     * less road than the spot gives - typically a roadless building on a spot
+     * at the road. Moving that one out is the only way left to place a
+     * building that needs the road once every free spot of its size is gone.
+     *
+     * @returns {Array<Object>} plan steps, each with .blocker set
+     */
+    SeekReclaim: () => {
+        const k = RebuildGuide.Seek;
+        if (!k || !(k.s > 0)) return [];
+        return RebuildGuide.Steps.filter(s => s.stolen && s.blocker && RebuildGuide.Fits(k, s));
+    },
+
+
+    /**
      * Marks every step done / blocked / still to do against the current city,
      * and moves the guide on to the first band that has work left.
      */
@@ -469,10 +502,23 @@ let RebuildGuide = {
             s.state = 'todo';
             s.blocker = null;
             s.swap = null;
+            s.occ = null;
+            s.stolen = false;
 
             const at = tiles.get(s.x + ',' + s.y);
+            // a spot at a road is reserved for a building that needs the road:
+            // a roadless one fits the footprint, but standing there it leaves a
+            // building that needs the road without a place - so it is not done,
+            // it is in the way, and shown in red like anything else in the way
+            if (at && at.x === s.x && at.y === s.y && RebuildGuide.Fits(at, s) && RebuildGuide.RoadWaste(at, s) > 0) {
+                s.state = 'blocked';
+                s.blocker = at;
+                s.stolen = true;
+                continue;
+            }
             if (at && at.x === s.x && at.y === s.y && RebuildGuide.Fits(at, s)) {
                 s.state = 'done';
+                s.occ = at;
                 // a spot filled by a different building of the same size is done,
                 // but the player still has to know it happened: the building the
                 // plan meant for it now needs one of the other spots
@@ -491,9 +537,87 @@ let RebuildGuide = {
             if (s.blocker) s.state = 'blocked';
         }
 
+        RebuildGuide.Misplaced = RebuildGuide.FindMisplaced(tiles);
+
         if (!RebuildGuide.ManualBand) {
             const first = RebuildGuide.FirstOpenBand();
             if (first !== null) RebuildGuide.Band = first;
+        }
+    },
+
+
+    /**
+     * Buildings the player put down in reconstruction mode that stand on no
+     * spot of the plan - a tile off, crooked across two spots, or a roadless
+     * one on a spot at a road - each paired with the nearest open spot it
+     * fits. Only what was moved counts: the untouched city is not wrong, it
+     * is simply not rebuilt yet.
+     *
+     * @param {Map<string, Object>} tiles - Occupancy()
+     * @returns {Array<{rec: Object, target: Object|null}>}
+     */
+    FindMisplaced: (tiles) => {
+        const seen = new Set(), out = [];
+        for (const rec of tiles.values()) {
+            if (seen.has(rec) || !rec.placed || rec.t === 'street') continue;
+            seen.add(rec);
+            const onSpot = RebuildGuide.Steps.some(st => st.x === rec.x && st.y === rec.y
+                && RebuildGuide.Fits(rec, st) && RebuildGuide.RoadWaste(rec, st) === 0);
+            if (!onSpot) out.push({ rec: rec, target: null });
+        }
+        if (!out.length) return out;
+
+        // the nearest open spot it fits - a spot it covers itself counts as open
+        const taken = new Set();
+        for (const m of out) {
+            const r = m.rec;
+            const open = RebuildGuide.Steps.filter(st => st.t !== 'street' && !taken.has(st)
+                && (st.state === 'todo' || (st.state === 'blocked' && st.blocker && st.blocker.id === r.id))
+                && RebuildGuide.Fits(r, st));
+            const own = open.filter(st => RebuildGuide.RoadWaste(r, st) === 0);
+            const pool = own.length ? own : open;
+            let best = null, bestD = Infinity;
+            for (const st of pool) {
+                const d = Math.abs(st.x - r.x) + Math.abs(st.y - r.y);
+                if (d < bestD) { best = st; bestD = d; }
+            }
+            if (best) taken.add(best);
+            m.target = best;
+        }
+        return out;
+    },
+
+
+    /**
+     * Crooked buildings on a map: the building where it lies in red, the spot
+     * it belongs on in green, a line from one to the other.
+     *
+     * @param {CanvasRenderingContext2D} ctx
+     * @param {number} u - pixels per tile
+     */
+    PaintMisplaced: (ctx, u) => {
+        for (const m of RebuildGuide.Misplaced) {
+            const r = m.rec, t = m.target;
+            if (t) {
+                ctx.fillStyle = 'rgba(70, 235, 70, 0.35)';
+                ctx.fillRect(t.x * u, t.y * u, t.w * u, t.h * u);
+                ctx.lineWidth = Math.max(2, Math.round(u / 4));
+                ctx.strokeStyle = '#46eb46';
+                ctx.strokeRect(t.x * u, t.y * u, t.w * u, t.h * u);
+            }
+            ctx.fillStyle = 'rgba(255, 42, 42, 0.55)';
+            ctx.fillRect(r.x * u, r.y * u, r.w * u, r.h * u);
+            ctx.lineWidth = Math.max(2, Math.round(u / 4));
+            ctx.strokeStyle = '#ff2a2a';
+            ctx.strokeRect(r.x * u, r.y * u, r.w * u, r.h * u);
+            if (t) {
+                ctx.beginPath();
+                ctx.moveTo((r.x + r.w / 2) * u, (r.y + r.h / 2) * u);
+                ctx.lineTo((t.x + t.w / 2) * u, (t.y + t.h / 2) * u);
+                ctx.lineWidth = Math.max(1.5, u / 6);
+                ctx.strokeStyle = '#ffffff';
+                ctx.stroke();
+            }
         }
     },
 
@@ -521,6 +645,10 @@ let RebuildGuide = {
             const rec = { a: asset, t: m.t, w: m.w, h: m.h, s: m.s };
             // two tabs can top out with the same footprint - each gets its own spot
             const fit = open.filter(s => !taken.has(s) && RebuildGuide.Fits(rec, s));
+            // the spot with the road level it needs before one with a road to spare
+            const waste = Math.min(...fit.map(s => RebuildGuide.RoadWaste(rec, s)), 99);
+            const best = fit.filter(s => RebuildGuide.RoadWaste(rec, s) === waste);
+            fit.splice(0, fit.length, ...best);
             const spot = fit.find(s => s.band === RebuildGuide.Band && s.state === 'todo')
                 || fit.find(s => s.state === 'todo')
                 || fit[0]
@@ -593,8 +721,13 @@ let RebuildGuide = {
     SeekSpots: () => {
         const k = RebuildGuide.Seek;
         if (!k) return [];
-        const fit = RebuildGuide.Steps.filter(s => s.state !== 'done' && s.t !== 'street' && RebuildGuide.Fits(k, s));
-        const rank = (s) => (s.state === 'blocked' ? 2 : 0) + (s.band === RebuildGuide.Band ? 0 : 1);
+        let fit = RebuildGuide.Steps.filter(s => s.state !== 'done' && s.t !== 'street' && RebuildGuide.Fits(k, s));
+        // spots at a road are reserved for the buildings that need it
+        const own = fit.filter(s => RebuildGuide.RoadWaste(k, s) === 0);
+        if (own.length) fit = own;
+        // a spot at a road comes last for a building that needs none: taking it
+        // leaves a building that needs the road without a place
+        const rank = (s) => RebuildGuide.RoadWaste(k, s) * 4 + (s.state === 'blocked' ? 2 : 0) + (s.band === RebuildGuide.Band ? 0 : 1);
         // Steps are already in the guide's order, and the sort is stable
         return fit.slice().sort((x, y) => rank(x) - rank(y));
     },
@@ -608,6 +741,7 @@ let RebuildGuide = {
      */
     SeekSet: (rec) => {
         RebuildGuide.Seek = rec ? { a: rec.a, n: rec.n, w: rec.w, h: rec.h, s: rec.s || 0, t: rec.t } : null;
+        RebuildGuide.MapScroll = null;
         RebuildGuide.MarkSeek();
         RebuildGuide.Render();
         if (typeof CityBuilder !== 'undefined' && $('#city-builder-canvas').length) CityBuilder.Renderer.render();
@@ -635,22 +769,35 @@ let RebuildGuide = {
      */
     MarkSeek: () => {
         if (typeof BuildingMarker === 'undefined' || !BuildingMarker.supported) return;
+        // crooked buildings are shown right away, before anything looked up:
+        // red where the building lies, green with the arrow where it belongs
+        const wrong = [];
+        for (const m of RebuildGuide.Misplaced.slice(0, 4)) {
+            wrong.push({ x: m.rec.x, y: m.rec.y, width: m.rec.w, length: m.rec.h, arrow: false, kind: 'wrong' });
+            if (m.target) wrong.push({ x: m.target.x, y: m.target.y, width: m.target.w, length: m.target.h, arrow: true, kind: 'good' });
+        }
         // free spots only, as long as there are any: a spot with a building
         // still on it is no answer to "where can I put this down now"
         const all = RebuildGuide.SeekSpots();
         const free = all.filter(s => s.state !== 'blocked');
-        const spots = (free.length ? free : all).slice(0, 8);
+        // nothing open at all: the spots a roadless building holds at a road
+        const spots = (free.length ? free : (all.length ? all : RebuildGuide.SeekReclaim())).slice(0, 8);
+        if (!spots.length && wrong.length) {
+            RebuildGuide.SeekMarked = true;
+            BuildingMarker.showAreas(wrong);
+            return;
+        }
         if (!spots.length) {
             if (RebuildGuide.SeekMarked) BuildingMarker.hide();
             RebuildGuide.SeekMarked = false;
             return;
         }
         RebuildGuide.SeekMarked = true;
-        BuildingMarker.showAreas(spots.map((s, i) => ({
+        BuildingMarker.showAreas(wrong.concat(spots.map((s, i) => ({
             x: s.x, y: s.y, width: s.w, length: s.h,
-            arrow: i === 0,
-            kind: (i === 0 ? '' : 'alt') + (s.state === 'blocked' ? ' blocked' : '')
-        })));
+            arrow: i === 0 && !wrong.length,
+            kind: (i === 0 ? '' : 'alt') + (s.state !== 'todo' ? ' blocked' : '')
+        }))));
     },
 
 
@@ -861,7 +1008,7 @@ let RebuildGuide = {
         if (!RebuildGuide.Steps.length) return;
         RebuildGuide.Evaluate();
         // a spot just filled is no longer free - the outline moves on to the next
-        if (RebuildGuide.Seek) RebuildGuide.MarkSeek();
+        if (RebuildGuide.Seek || RebuildGuide.Misplaced.length || RebuildGuide.SeekMarked) RebuildGuide.MarkSeek();
         RebuildGuide.Render();
         RebuildGuide.AnnotateList();
         // the plan overlay paints the same states, so it has to follow along
@@ -954,6 +1101,22 @@ let RebuildGuide = {
             h.push('</div>');
         }
 
+        // crooked buildings first: they are what to fix before going on
+        if (RebuildGuide.Misplaced.length) {
+            h.push('<div class="rg-misplaced">');
+            h.push(`<div class="rg-misplaced-title">${i18n('Boxes.RebuildGuide.Misplaced')}</div>`);
+            for (const m of RebuildGuide.Misplaced.slice(0, 5)) {
+                h.push(`<div class="rg-misplaced-line rg-seekable" data-asset="${RebuildGuide.Escape(m.rec.a)}">`
+                    + `<b>${RebuildGuide.Escape(m.rec.n)}</b> <span class="rg-mis-at">(${m.rec.x}, ${m.rec.y})</span> `
+                    + (m.target
+                        ? `&rarr; <span class="rg-mis-to">${m.target.x}, ${m.target.y}</span>`
+                        : `<span class="rg-top-none">${i18n('Boxes.RebuildGuide.TopNoSpot')}</span>`)
+                    + '</div>');
+            }
+            if (RebuildGuide.Misplaced.length > 5) h.push(`<div class="rg-seek-more">+${RebuildGuide.Misplaced.length - 5}</div>`);
+            h.push('</div>');
+        }
+
         // the plan is picked here as well, not only in the City Builder: its
         // buttons are where a player looks for "which plan does this follow"
         const vrows = RebuildGuide.VariantRows();
@@ -962,20 +1125,26 @@ let RebuildGuide = {
         if (!vrows.length) {
             h.push(`<div class="rg-variants-none">${i18n('Boxes.RebuildGuide.VariantsNone')}</div>`);
         } else {
-            h.push('<table class="foe-table rg-variants-table"><tbody>');
+            // one compact row per variant: the label on its own line, the numbers
+            // under it, the action on the right - as table cells the label was
+            // squeezed into a column a word wide
+            h.push('<div class="rg-variants-list">');
             for (const r of vrows) {
-                h.push(`<tr class="${r.current ? 'rg-v-current' : ''}${r.recommended ? ' rg-v-best' : ''}">`);
-                h.push(`<td class="rg-v-label">${r.label}`
-                    + (r.recommended ? ` <span class="rg-v-tag">${i18n('Boxes.RebuildGuide.Recommended')}</span>` : '')
-                    + '</td>');
-                h.push(`<td class="rg-v-moved">${r.moved !== null ? i18n('Boxes.RebuildGuide.MovedN').replace('__n__', r.moved) : ''}</td>`);
-                h.push(`<td class="rg-v-shared">${r.shared !== null ? i18n('Boxes.RebuildGuide.SharedN').replace('__n__', r.shared).replace('__total__', r.count) : ''}</td>`);
-                h.push('<td class="rg-v-act">' + (r.current
+                const facts = [];
+                if (r.moved !== null) facts.push(i18n('Boxes.RebuildGuide.MovedN').replace('__n__', r.moved));
+                if (r.shared !== null) facts.push(i18n('Boxes.RebuildGuide.SharedN').replace('__n__', r.shared).replace('__total__', r.count));
+                h.push(`<div class="rg-v-row${r.current ? ' rg-v-current' : ''}${r.recommended ? ' rg-v-best' : ''}">`);
+                h.push('<div class="rg-v-text">');
+                h.push(`<div class="rg-v-label">${r.label}`
+                    + (r.recommended ? ` <span class="rg-v-tag">${i18n('Boxes.RebuildGuide.Recommended')}</span>` : '') + '</div>');
+                h.push(`<div class="rg-v-facts">${facts.join(' &middot; ')}</div>`);
+                h.push('</div>');
+                h.push('<div class="rg-v-act">' + (r.current
                     ? `<span class="rg-v-now">${i18n('Boxes.RebuildGuide.CurrentPlan')}</span>`
-                    : `<button class="btn btn-slim rg-v-use" data-i="${r.i}">${i18n('Boxes.RebuildGuide.UseVariant')}</button>`) + '</td>');
-                h.push('</tr>');
+                    : `<button class="btn btn-slim rg-v-use" data-i="${r.i}">${i18n('Boxes.RebuildGuide.UseVariant')}</button>`) + '</div>');
+                h.push('</div>');
             }
-            h.push('</tbody></table>');
+            h.push('</div>');
         }
         h.push('</details>');
 
@@ -994,7 +1163,7 @@ let RebuildGuide = {
         }
 
         if (RebuildGuide.OffPlan) {
-            h.push(`<div class="rg-warn">${i18n('Boxes.RebuildGuide.OffPlan')}: `
+            h.push(`<div class="rg-warn">${i18n(RebuildGuide.OffPlan.stolen ? 'Boxes.RebuildGuide.OffPlanRoad' : 'Boxes.RebuildGuide.OffPlan')}: `
                 + `<b>${RebuildGuide.Escape(RebuildGuide.OffPlan.name)}</b> `
                 + `(${RebuildGuide.OffPlan.x}, ${RebuildGuide.OffPlan.y})</div>`);
         }
@@ -1025,13 +1194,24 @@ let RebuildGuide = {
         if (seek) {
             const spots = RebuildGuide.SeekSpots();
             if (!spots.length) {
-                h.push(`<div class="rg-seek-result rg-seek-none">${i18n('Boxes.RebuildGuide.SeekNone')}</div>`);
+                const reclaim = RebuildGuide.SeekReclaim();
+                h.push('<div class="rg-seek-result rg-seek-none">');
+                h.push(`<div>${i18n('Boxes.RebuildGuide.SeekNone')}</div>`);
+                if (reclaim.length) {
+                    h.push(`<div class="rg-seek-reclaim-title">${i18n('Boxes.RebuildGuide.SeekReclaim')}</div>`);
+                    for (const r of reclaim.slice(0, 5)) {
+                        h.push(`<div class="rg-seek-reclaim">&rarr; <b>${r.x}, ${r.y}</b>: ${i18n('Boxes.RebuildGuide.SeekReclaimLine')
+                            .replace('__name__', '<b>' + RebuildGuide.Escape(r.blocker.n) + '</b>')}</div>`);
+                    }
+                    if (reclaim.length > 5) h.push(`<div class="rg-seek-more">+${reclaim.length - 5}</div>`);
+                }
+                h.push('</div>');
             } else {
                 const first = spots[0];
                 h.push('<div class="rg-seek-result">');
                 h.push(`<span class="rg-seek-pos">&rarr; ${first.x}, ${first.y}</span>`);
                 if (first.state === 'blocked' && first.blocker) {
-                    h.push(` <span class="rg-seek-blocked">${i18n('Boxes.RebuildGuide.Blocked')}: <b>${RebuildGuide.Escape(first.blocker.n)}</b></span>`);
+                    h.push(` <span class="rg-seek-blocked">${i18n(first.stolen ? 'Boxes.RebuildGuide.Stolen' : 'Boxes.RebuildGuide.Blocked')}: <b>${RebuildGuide.Escape(first.blocker.n)}</b></span>`);
                 }
                 if (spots.length > 1) {
                     h.push(` <span class="rg-seek-more">${i18n('Boxes.RebuildGuide.SeekMore').replace('__n__', spots.length - 1)}</span>`);
@@ -1057,7 +1237,7 @@ let RebuildGuide = {
             h.push(`<span class="rg-now-pos">${next.x}, ${next.y}</span>`);
             h.push('</div>');
             if (next.state === 'blocked' && next.blocker) {
-                h.push(`<div class="rg-now-blocked">${i18n('Boxes.RebuildGuide.Blocked')}: `
+                h.push(`<div class="rg-now-blocked">${i18n(next.stolen ? 'Boxes.RebuildGuide.Stolen' : 'Boxes.RebuildGuide.Blocked')}: `
                     + `<b>${RebuildGuide.Escape(next.blocker.n)}</b></div>`);
             }
         }
@@ -1101,7 +1281,7 @@ let RebuildGuide = {
                 : `<td class="rg-name fh-tooltip" data-callback_tt="Tooltips.buildingTT" data-meta_id="${RebuildGuide.Escape(s.a)}">${RebuildGuide.Label(s)}</td>`);
             h.push(`<td class="rg-pos">${s.x}, ${s.y}</td>`);
             h.push(`<td class="rg-state">${s.state === 'blocked' && s.blocker
-                ? i18n('Boxes.RebuildGuide.Blocked') + ': ' + RebuildGuide.Escape(s.blocker.n)
+                ? (s.stolen ? i18n('Boxes.RebuildGuide.Stolen') : i18n('Boxes.RebuildGuide.Blocked')) + ': ' + RebuildGuide.Escape(s.blocker.n)
                 : (s.swap ? '<span class="rg-swap">' + RebuildGuide.Escape(s.swap) + '</span>' : '')}</td>`);
             h.push('</tr>');
         }
@@ -1145,6 +1325,55 @@ let RebuildGuide = {
                     if (read) read.textContent = text;
                 });
                 map.addEventListener('mouseleave', () => { if (read) read.textContent = ''; });
+
+                // grab and drag the plan like the game map - the scrollbars
+                // alone were the only way to move it, and fiddly at that
+                const wrap = map.parentElement;
+                let drag = null;
+                wrap.addEventListener('mousedown', (e) => {
+                    if (e.button !== 0) return;
+                    drag = { x: e.clientX, y: e.clientY, l: wrap.scrollLeft, t: wrap.scrollTop };
+                    wrap.classList.add('rg-dragging');
+                    e.preventDefault();
+                });
+                const move = (e) => {
+                    if (!drag) return;
+                    wrap.scrollLeft = drag.l - (e.clientX - drag.x);
+                    wrap.scrollTop = drag.t - (e.clientY - drag.y);
+                    RebuildGuide.MapScroll = { l: wrap.scrollLeft, t: wrap.scrollTop };
+                };
+                const end = () => {
+                    if (!drag) return;
+                    drag = null;
+                    wrap.classList.remove('rg-dragging');
+                };
+                // on the document: a drag that leaves the map keeps going
+                const doc = wrap.ownerDocument;
+                doc.addEventListener('mousemove', move);
+                doc.addEventListener('mouseup', end);
+                // the box is redrawn often - drop the listeners of the old map
+                const gone = setInterval(() => {
+                    if (wrap.isConnected) return;
+                    clearInterval(gone);
+                    doc.removeEventListener('mousemove', move);
+                    doc.removeEventListener('mouseup', end);
+                }, 2000);
+
+                // wheel zooms around the cursor, the tile under it stays put
+                wrap.addEventListener('wheel', (e) => {
+                    e.preventDefault();
+                    const old = RebuildGuide.Scale();
+                    const next = Math.max(4, Math.min(36, old + (e.deltaY < 0 ? 2 : -2)));
+                    if (next === old) return;
+                    const r = wrap.getBoundingClientRect();
+                    const mx = e.clientX - r.left, my = e.clientY - r.top;
+                    const tx = (wrap.scrollLeft + mx) / old, ty = (wrap.scrollTop + my) / old;
+                    localStorage.setItem('RebuildGuideScale', next);
+                    $('#RebuildGuideBoxBody .rg-scale').val(next);
+                    RebuildGuide.MapScroll = { l: tx * next - mx, t: ty * next - my };
+                    RebuildGuide.DrawMap();
+                    RebuildGuide.MapScroll = { l: wrap.scrollLeft, t: wrap.scrollTop };
+                }, { passive: false });
             }
 
             // a suggestion picked from the list arrives as an input event with
@@ -1232,6 +1461,7 @@ let RebuildGuide = {
         const bands = RebuildGuide.BandCount();
         RebuildGuide.Band = Math.max(0, Math.min(bands - 1, band));
         RebuildGuide.ManualBand = true;
+        RebuildGuide.MapScroll = null;
         RebuildGuide.Render();
     },
 
@@ -1304,7 +1534,8 @@ let RebuildGuide = {
             const bx = s.x * u, by = s.y * u, bw = s.w * u, bh = s.h * u;
 
             if (s.state === 'done') ctx.fillStyle = s.t === 'street' ? 'rgba(60, 90, 70, 0.85)' : 'rgba(93, 173, 116, 0.85)';
-            else if (cur && s.state === 'blocked') ctx.fillStyle = 'rgba(214, 84, 84, 0.9)';
+            // a road spot taken by a roadless building is red in every band
+            else if (s.stolen || (cur && s.state === 'blocked')) ctx.fillStyle = 'rgba(214, 84, 84, 0.9)';
             else if (cur) ctx.fillStyle = 'rgba(255, 196, 61, 0.95)';
             else ctx.fillStyle = s.t === 'street' ? 'rgba(120, 120, 120, 0.25)' : 'rgba(200, 200, 200, 0.22)';
             ctx.fillRect(bx, by, bw, bh);
@@ -1335,7 +1566,14 @@ let RebuildGuide = {
 
         RebuildGuide.PaintTop(ctx, u);
         RebuildGuide.PaintSeek(ctx, u);
-        RebuildGuide.ScrollToStep(canvas);
+        RebuildGuide.PaintMisplaced(ctx, u);
+        const wrap = canvas.parentElement;
+        if (RebuildGuide.MapScroll && wrap) {
+            wrap.scrollLeft = RebuildGuide.MapScroll.l;
+            wrap.scrollTop = RebuildGuide.MapScroll.t;
+        } else {
+            RebuildGuide.ScrollToStep(canvas);
+        }
     },
 
 
@@ -1352,7 +1590,9 @@ let RebuildGuide = {
         const view = RebuildGuide.MapView;
         if (!wrap || !view || !wrap.clientWidth) return;
 
-        const s = RebuildGuide.Steps.find(o => o.band === RebuildGuide.Band && o.state !== 'done'
+        // a looked-up building wins: its spot is what the player is after
+        const sought = RebuildGuide.Seek ? RebuildGuide.SeekSpots()[0] : null;
+        const s = sought || RebuildGuide.Steps.find(o => o.band === RebuildGuide.Band && o.state !== 'done'
             && (o.t !== 'street' || RebuildGuide.ShowRoads()));
         if (!s) return;
 
@@ -1407,7 +1647,7 @@ let RebuildGuide = {
             : (s.n || '');
         return name + '  ' + s.h + '×' + s.w + '  → ' + s.x + ', ' + s.y
             + (s.state === 'done' ? '  ✓' + (s.swap ? ' ' + s.swap : '') : '')
-            + (s.state === 'blocked' && s.blocker ? '  (' + i18n('Boxes.RebuildGuide.Blocked') + ': ' + s.blocker.n + ')' : '');
+            + (s.state === 'blocked' && s.blocker ? '  (' + i18n(s.stolen ? 'Boxes.RebuildGuide.Stolen' : 'Boxes.RebuildGuide.Blocked') + ': ' + s.blocker.n + ')' : '');
     },
 
 
@@ -1457,7 +1697,14 @@ let RebuildGuide = {
 
         for (const s of RebuildGuide.Steps) {
             const bx = s.x * unit, by = s.y * unit, bw = s.w * unit, bh = s.h * unit;
-            if (s.band === RebuildGuide.Band && s.state !== 'done') {
+            if (s.stolen) {
+                // a road spot taken by a roadless building, wherever it is
+                ctx.fillStyle = 'rgba(214, 60, 60, 0.45)';
+                ctx.fillRect(bx, by, bw, bh);
+                ctx.strokeStyle = 'rgba(214, 60, 60, 0.95)';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(bx + 1.5, by + 1.5, bw - 3, bh - 3);
+            } else if (s.band === RebuildGuide.Band && s.state !== 'done') {
                 // the stripe to fill next: everything else is dimmed away
                 ctx.strokeStyle = s.state === 'blocked' ? 'rgba(214, 60, 60, 0.95)' : 'rgba(255, 196, 61, 0.95)';
                 ctx.lineWidth = 3;
@@ -1473,6 +1720,7 @@ let RebuildGuide = {
 
         RebuildGuide.PaintTop(ctx, unit);
         RebuildGuide.PaintSeek(ctx, unit);
+        RebuildGuide.PaintMisplaced(ctx, unit);
     },
 
 
@@ -1495,7 +1743,8 @@ let RebuildGuide = {
             $row.find('.rg-target').remove();
             const m = RebuildGuide.Meta(String($row.attr('data-meta_id')));
             if (!m) return;
-            const s = open.find(o => o.w === m.w && o.h === m.h && (m.s || 0) <= (o.s || 0));
+            const fit = open.filter(o => o.w === m.w && o.h === m.h && (m.s || 0) <= (o.s || 0));
+            const s = fit.find(o => RebuildGuide.RoadWaste(m, o) === 0) || fit[0];
             if (!s) return;
             const cur = s.band === RebuildGuide.Band ? ' rg-target-now' : '';
             $row.children('td').first().append(
@@ -1552,6 +1801,8 @@ FoEproxy.addRequestHandler('CityReconstructionService', 'saveDraft', (data) => {
         const rec = { a: asset, t: meta.t, w: meta.w, h: meta.h, s: meta.s };
         if (!RebuildGuide.Steps.some(s => s.x === px && s.y === py && RebuildGuide.Fits(rec, s))) {
             RebuildGuide.OffPlan = { name: meta.n || asset, x: px, y: py };
+        } else if (!RebuildGuide.Steps.some(s => s.x === px && s.y === py && RebuildGuide.Fits(rec, s) && RebuildGuide.RoadWaste(rec, s) === 0)) {
+            RebuildGuide.OffPlan = { name: meta.n || asset, x: px, y: py, stolen: true };
         }
     }
 

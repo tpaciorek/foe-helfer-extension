@@ -100,6 +100,20 @@
 	stroke-dasharray: 8 6;
 }
 
+/* a building put down off its spot: red, solid */
+#BuildingMarkerOverlay .building-marker-area-wrong polygon {
+	fill: rgba(255, 30, 30, 0.35);
+	stroke: #ff1e1e;
+	stroke-width: 4;
+}
+
+/* the spot it belongs on: green */
+#BuildingMarkerOverlay .building-marker-area-good polygon {
+	fill: rgba(60, 235, 60, 0.25);
+	stroke: #3ceb3c;
+	stroke-width: 4;
+}
+
 #BuildingMarkerOverlay .building-marker-noarrow {
 	display: none;
 }
