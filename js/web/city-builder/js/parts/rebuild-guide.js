@@ -413,22 +413,25 @@ let RebuildGuide = {
             }
         };
 
-        if (RebuildGuide.Draft) {
-            for (const [id, d] of Object.entries(RebuildGuide.Draft)) {
-                if (!d || !d.position) continue;
-                const inst = cityMap[id];
-                if (!inst) continue;
+        // The draft only holds the buildings touched in reconstruction mode -
+        // everything else still stands where the city map has it. Reading the
+        // draft alone made every untouched building invisible, and its tiles
+        // were offered as free spots. So: the city first, the draft on top
+        // (a draft entry without a position is a building put away).
+        const draft = RebuildGuide.Draft || {};
+        for (const [id, inst] of Object.entries(cityMap)) {
+            if (!inst) continue;
+            const d = draft[id];
+            if (d) {
+                if (!d.position) continue;
                 // the game leaves out a coordinate that is zero
                 add(id, inst, parseInt(d.position.x) || 0, parseInt(d.position.y) || 0);
+                continue;
             }
-        } else {
-            for (const [id, inst] of Object.entries(cityMap)) {
-                if (!inst) continue;
-                const rx = inst.x !== undefined ? inst.x : inst.coords?.x;
-                const ry = inst.y !== undefined ? inst.y : inst.coords?.y;
-                if (rx === undefined && ry === undefined) continue;
-                add(id, inst, parseInt(rx) || 0, parseInt(ry) || 0);
-            }
+            const rx = inst.x !== undefined ? inst.x : inst.coords?.x;
+            const ry = inst.y !== undefined ? inst.y : inst.coords?.y;
+            if (rx === undefined && ry === undefined) continue;
+            add(id, inst, parseInt(rx) || 0, parseInt(ry) || 0);
         }
 
         return tiles;
@@ -632,7 +635,11 @@ let RebuildGuide = {
      */
     MarkSeek: () => {
         if (typeof BuildingMarker === 'undefined' || !BuildingMarker.supported) return;
-        const spots = RebuildGuide.SeekSpots().slice(0, 8);
+        // free spots only, as long as there are any: a spot with a building
+        // still on it is no answer to "where can I put this down now"
+        const all = RebuildGuide.SeekSpots();
+        const free = all.filter(s => s.state !== 'blocked');
+        const spots = (free.length ? free : all).slice(0, 8);
         if (!spots.length) {
             if (RebuildGuide.SeekMarked) BuildingMarker.hide();
             RebuildGuide.SeekMarked = false;
