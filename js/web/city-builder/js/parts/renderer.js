@@ -168,31 +168,74 @@ CityBuilder.Renderer = {
      * @param {Map} cache - Per-render cache for resolved CSS variables.
      * @returns {string} CSS color.
      */
-    buildingColor: (b, cache) => {
-        let type = b.type || 'generic_building';
+    buildingColor: (b, cache) => CityBuilder.Renderer.typeColor(b, cache, 'background'),
+
+
+    /**
+     * Border colour of a building, the City Map's --border-color-* of its type.
+     *
+     * @param {Object} b - Layout entry.
+     * @param {Map} cache - Per-render cache for resolved CSS variables.
+     * @returns {string} CSS color.
+     */
+    buildingBorder: (b, cache) => CityBuilder.Renderer.typeColor(b, cache, 'border'),
+
+
+    /**
+     * The type the City Map colours a building by: the game's building type of
+     * its entity (residential, production, greatbuilding, ...). The layout
+     * entry itself only carries the instance type, which is "generic_building"
+     * for most of a modern city - drawn by that, the plan was one grey block.
+     *
+     * @param {Object} b - Layout entry.
+     * @returns {string} type key of the --background-color-* variables
+     */
+    typeOf: (b) => {
+        const type = b.type || 'generic_building';
+        if (type === 'reserved') return 'reserved';
+        if (type.includes('street') || b.name === 'Road') return 'street';
+        const meta = b.asset_id && typeof MainParser !== 'undefined' && MainParser.CityEntities
+            ? MainParser.CityEntities[b.asset_id] : null;
+        return (meta && meta.type) || type;
+    },
+
+
+    /**
+     * Fill or border colour of a building in the City Map's colour scheme,
+     * read from the shared CSS variables so both maps always agree.
+     *
+     * @param {Object} b - Layout entry.
+     * @param {Map} cache - Per-render cache for resolved CSS variables.
+     * @param {string} part - 'background' or 'border'
+     * @returns {string} CSS color.
+     */
+    typeColor: (b, cache, part) => {
+        const type = CityBuilder.Renderer.typeOf(b);
+        const border = part === 'border';
         // space kept free on purpose, e.g. for a quest building
-        if (type === 'reserved') return 'rgba(124, 230, 76, 0.75)';
-        if (type.includes('street') || b.name === 'Road') type = 'street';
-        if (b.street_level === 0 && type !== 'street') type = 'roadless';
+        if (type === 'reserved') return border ? '#4c9a2a' : 'rgba(124, 230, 76, 0.75)';
+        if (type === 'street') {
+            if (parseInt(b.level) >= 2) return border ? '#2a2a2a' : '#3d3d3d';
+        }
 
-        if (type === 'street') return (parseInt(b.level) >= 2) ? '#111111' : '#333333';
-        if (type === 'roadless') return '#8A2BE2';
-
-        const fallbacks = {
-            main_building: '#FFD700',
-            greatbuilding: '#FF4500',
-            generic_building: '#A0A0A0'
-        };
-
-        if (!cache.has(type)) {
+        const key = part + '|' + type;
+        if (!cache.has(key)) {
             let color = '';
             try {
                 color = getComputedStyle(document.documentElement)
-                    .getPropertyValue(`--background-color-${type}`).trim();
+                    .getPropertyValue('--' + part + '-color-' + type).trim();
+                // a building whose entity is unknown keeps the instance type,
+                // which is "generic_building" for nearly every modern one - the
+                // City Map files most of those under residential
+                if (!color && type === 'generic_building') {
+                    color = getComputedStyle(document.documentElement)
+                        .getPropertyValue('--' + part + '-color-residential').trim();
+                }
             } catch (e) { /* variables stylesheet not available */ }
-            cache.set(type, color || fallbacks[type] || '#87CEEB');
+            // same fallback as the City Map: an unknown type is drawn white
+            cache.set(key, color || (border ? '#bbbbbb' : '#ffffff'));
         }
-        return cache.get(type);
+        return cache.get(key);
     },
 
 
@@ -324,15 +367,12 @@ CityBuilder.Renderer = {
  */
 CityBuilder.Renderer.Layers = [
     {
-        // green overlay for the unlocked areas, neutral fallback otherwise
+        // the unlocked ground in the City Map's look: pale yellow tiles, so
+        // every tile no building covers reads as free space at a glance
         name: 'background',
         draw: (v) => {
             if (v.areas.length > 0) {
-                // Solid green for the unlocked ground: every tile no building
-                // covers is free space, and that is the result the plan is
-                // judged on - at 30% opacity it was barely distinguishable
-                // from the map background
-                v.ctx.fillStyle = '#7ee081';
+                v.ctx.fillStyle = '#fffca6';
                 for (const area of v.areas) {
                     v.ctx.fillRect(area.x * v.scale, area.y * v.scale, area.width * v.scale, area.height * v.scale);
                 }
@@ -343,11 +383,18 @@ CityBuilder.Renderer.Layers = [
         }
     },
     {
-        // fine 1x1 tile raster
+        // fine 1x1 tile raster - olive lines on the free ground like the City
+        // Map's tiles, kept inside the unlocked areas
         name: 'grid',
         draw: (v) => {
-            v.ctx.strokeStyle = 'rgba(0, 0, 0, 0.1)';
-            v.ctx.lineWidth = 1;
+            v.ctx.save();
+            if (v.areas.length > 0) {
+                v.ctx.beginPath();
+                for (const area of v.areas) v.ctx.rect(area.x * v.scale, area.y * v.scale, area.width * v.scale, area.height * v.scale);
+                v.ctx.clip();
+            }
+            v.ctx.strokeStyle = 'rgba(168, 160, 60, 0.9)';
+            v.ctx.lineWidth = Math.max(1, v.scale * 0.1);
             v.ctx.beginPath();
             for (let x = 0; x <= v.maxX; x++) {
                 v.ctx.moveTo(x * v.scale, 0);
@@ -358,28 +405,26 @@ CityBuilder.Renderer.Layers = [
                 v.ctx.lineTo(v.width, y * v.scale);
             }
             v.ctx.stroke();
+            v.ctx.restore();
         }
     },
     {
         // area borders, or a coarse 4x4 raster when areas are missing
         name: 'sectors',
         draw: (v) => {
+            // the tiles already show the areas - borders between them would only
+            // cut the free ground into pieces it is not
+            if (v.areas.length > 0) return;
             v.ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
             v.ctx.lineWidth = 1.5;
             v.ctx.beginPath();
-            if (v.areas.length > 0) {
-                for (const area of v.areas) {
-                    v.ctx.rect(area.x * v.scale, area.y * v.scale, area.width * v.scale, area.height * v.scale);
-                }
-            } else {
-                for (let x = 0; x <= v.maxX; x += 4) {
-                    v.ctx.moveTo(x * v.scale, 0);
-                    v.ctx.lineTo(x * v.scale, v.height);
-                }
-                for (let y = 0; y <= v.maxY; y += 4) {
-                    v.ctx.moveTo(0, y * v.scale);
-                    v.ctx.lineTo(v.width, y * v.scale);
-                }
+            for (let x = 0; x <= v.maxX; x += 4) {
+                v.ctx.moveTo(x * v.scale, 0);
+                v.ctx.lineTo(x * v.scale, v.height);
+            }
+            for (let y = 0; y <= v.maxY; y += 4) {
+                v.ctx.moveTo(0, y * v.scale);
+                v.ctx.lineTo(v.width, y * v.scale);
             }
             v.ctx.stroke();
         }
@@ -402,9 +447,12 @@ CityBuilder.Renderer.Layers = [
                 v.ctx.fillRect(bx, by, bw, bh);
 
                 if (!isStreet) {
-                    v.ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-                    v.ctx.lineWidth = 1;
-                    v.ctx.strokeRect(bx, by, bw, bh);
+                    // the City Map's frame: the border colour of the type,
+                    // inside the footprint so neighbours keep a visible seam
+                    const lw = Math.max(1, Math.round(v.scale * 0.08));
+                    v.ctx.strokeStyle = CityBuilder.Renderer.buildingBorder(b, cssCache);
+                    v.ctx.lineWidth = lw;
+                    v.ctx.strokeRect(bx + lw / 2, by + lw / 2, bw - lw, bh - lw);
                 } else if (parseInt(b.level) >= 2 && parseInt(b.width || 1) >= 2) {
                     // two-lane pieces are 2x2 blocks - outline them so they are
                     // distinguishable from two parallel one-lane roads

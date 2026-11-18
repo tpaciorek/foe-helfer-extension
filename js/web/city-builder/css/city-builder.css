@@ -36,7 +36,9 @@
 	position: absolute;
 	top: 10px;
 	right: 10px;
-	z-index: 10;
+	/* above the stats panel: in the overlay the controls run wider than the
+	   box and the stats used to cover the view switch */
+	z-index: 11;
 	pointer-events: all;
 	background-color: #070b18b5;
 	padding: 4px 8px;
@@ -219,6 +221,11 @@
 }
 .optimized-city-controls .btn {
 	white-space: nowrap;
+}
+/* the slim buttons of the helper are cut at 100px - here that left
+   "111 dróg · 12..." and "Przewodnik pr..." and hid what they do */
+.optimized-city-controls .btn.btn-slim {
+	max-width: none;
 }
 
 .map-grid-canvas {
@@ -497,6 +504,22 @@ body.foe-helper-popup #CityBuilderBox .map-grid-wrapper {
 	background: none;
 	margin: 8px;
 }
+/* In the window the controls take their own rows above the plan: floating
+   over it (as they do on the live city) they covered its top edge and hid
+   the stats panel underneath. Order: controls, stats, map. */
+#CityBuilderBoxBody.flat-mode .optimized-city-controls {
+	position: static;
+	margin: 6px 8px;
+	width: auto;
+	flex-wrap: wrap;
+}
+#CityBuilderBoxBody.flat-mode .optimized-city-controls .controls-row {
+	flex-wrap: wrap;
+	justify-content: flex-end;
+}
+#CityBuilderBoxBody.flat-mode .city-builder-stats {
+	margin: 0 8px 6px;
+}
 
 #CityBuilderBoxBody.msg-state {
 	flex: 1 1 auto;
@@ -668,6 +691,105 @@ body.foe-helper-popup #CityBuilderBox .map-grid-wrapper {
 	font-size: 12px;
 	opacity: .85;
 	margin-left: auto;
+}
+/* what is left to the end, and the switch to the short view */
+.rg-left {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin-top: 2px;
+}
+.rg-compact-toggle {
+	white-space: nowrap;
+	cursor: pointer;
+}
+/* short view: the search box, its answer and what is left - nothing else */
+#RebuildGuideBoxBody.rg-compact-mode .rg-variants,
+#RebuildGuideBoxBody.rg-compact-mode .rg-newer,
+#RebuildGuideBoxBody.rg-compact-mode .rg-bandbar,
+#RebuildGuideBoxBody.rg-compact-mode .rg-now,
+#RebuildGuideBoxBody.rg-compact-mode .rg-now-blocked,
+#RebuildGuideBoxBody.rg-compact-mode .rg-top,
+#RebuildGuideBoxBody.rg-compact-mode .rg-top-off,
+#RebuildGuideBoxBody.rg-compact-mode .rg-steps-wrap,
+#RebuildGuideBoxBody.rg-compact-mode .rg-mapwrap,
+#RebuildGuideBoxBody.rg-compact-mode .rg-read,
+#RebuildGuideBoxBody.rg-compact-mode .rg-foot,
+#RebuildGuideBoxBody.rg-compact-mode .rg-hint {
+	display: none;
+}
+/* a town hall that is not on its spot keeps its blocker line in the short view */
+#RebuildGuideBoxBody.rg-compact-mode .rg-townhall .rg-now-blocked {
+	display: block;
+}
+/* the town hall cannot be stored: it is the first thing to move */
+.rg-townhall {
+	margin: 4px 0;
+	background: #5a3a08;
+	border: 2px solid #ffb300;
+	border-radius: 3px;
+	padding: 4px 8px;
+}
+.rg-townhall-title {
+	font-weight: bold;
+	color: #ffd25a;
+}
+.rg-townhall-pos {
+	color: #fff;
+	margin-left: 6px;
+}
+.rg-townhall-hint {
+	font-size: 12px;
+	opacity: .9;
+}
+.rg-seek-count {
+	font-size: 12px;
+	opacity: .9;
+}
+/* the plan variants of the last search, picked right in the guide */
+.rg-variants {
+	margin: 4px 0;
+	border: 1px solid #3a7ab3;
+	border-radius: 3px;
+	background: #1c2f44;
+	padding: 2px 6px;
+}
+.rg-variants summary {
+	cursor: pointer;
+	font-weight: bold;
+	color: #9fd0ff;
+}
+.rg-variants-none {
+	padding: 4px 0;
+	opacity: .85;
+}
+.rg-variants-table {
+	width: 100%;
+	margin: 3px 0;
+}
+.rg-variants-table td {
+	padding: 2px 6px;
+	white-space: nowrap;
+}
+.rg-variants-table .rg-v-label {
+	width: 100%;
+	white-space: normal;
+}
+.rg-variants-table tr.rg-v-current td {
+	background: rgba(70, 235, 70, 0.12);
+}
+.rg-v-tag {
+	background: #ffc43d;
+	color: #20160a;
+	border-radius: 3px;
+	padding: 0 5px;
+	font-size: 11px;
+	font-weight: bold;
+}
+.rg-v-now {
+	color: #8be28b;
+	font-weight: bold;
 }
 /* "where does this one go?" - the player names the building, its spots get
    outlined in red on the game map */

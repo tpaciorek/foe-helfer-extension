@@ -45,6 +45,8 @@ let RebuildGuide = {
     // player clears it - a building often comes in many copies, so it stays
     // picked while they put them down one by one
     Seek: null,
+    // whether the variant list of the guide is unfolded - kept across redraws
+    VariantsOpen: true,
     // the markers on the game map are the guide's - only then may it take them
     // down again, another module may have put its own arrows there
     SeekMarked: false,
@@ -64,6 +66,8 @@ let RebuildGuide = {
 
 
     Order: () => localStorage.getItem('RebuildGuideOrder') || 'screen',
+    // short view: only the search box, its answer and what is left
+    Compact: () => localStorage.getItem('RebuildGuideCompact') === '1',
     BandSize: () => Math.max(1, parseInt(localStorage.getItem('RebuildGuideBand') || 4)),
     ShowRoads: () => localStorage.getItem('RebuildGuideRoads') !== '0',
     // 12 px per tile is the smallest scale at which a 3x4 building still has
@@ -157,6 +161,80 @@ let RebuildGuide = {
         RebuildGuide.OffPlan = null;
         RebuildGuide.Prepare();
         RebuildGuide.Open();
+    },
+
+
+    /**
+     * The variants of the City Builder's last search, ready to pick from inside
+     * the guide: what each costs in roads, the square it keeps free, how many
+     * buildings it moves and - while a plan is being carried out - how many of
+     * its spots that plan already shares. One of them is marked as the
+     * recommendation.
+     *
+     * Only a search on our own city counts: a visited city's layout can never
+     * become the plan.
+     *
+     * @returns {Array<Object>} [{i, label, roads, square, moved, shared, current, recommended}]
+     */
+    VariantRows: () => {
+        if (typeof CityBuilder === 'undefined') return [];
+        const list = CityBuilder.Variants || [];
+        if (!list.length || (CityBuilder.SearchMap && CityBuilder.SearchMap !== 'main')) return [];
+
+        const excluded = CityBuilder.Excluded || new Set();
+        const shown = (v) => v.layout.filter(b => !(b.id !== undefined && b.id !== null && excluded.has(b.id)));
+        const key = (b) => (parseInt(b.x) || 0) + ',' + (parseInt(b.y) || 0) + ',' + (parseInt(b.width) || 1) + 'x' + (parseInt(b.height) || 1);
+        const plan = RebuildGuide.Plan;
+        const planKeys = plan ? new Set(plan.items.map(it => it.x + ',' + it.y + ',' + it.w + 'x' + it.h)) : null;
+
+        const rows = list.map((v, i) => {
+            if (!v || !v.layout) return null;
+            const items = shown(v);
+            const st = v.stats || {};
+            return {
+                i: i,
+                label: CityBuilder.VariantLabel ? CityBuilder.VariantLabel(i) : String(i + 1),
+                roads: st.roads,
+                square: st.square,
+                moved: typeof st.moved === 'number' ? st.moved : null,
+                total: st.knownHomes || null,
+                shared: planKeys ? items.filter(b => planKeys.has(key(b))).length : null,
+                count: items.length,
+                current: !!plan && RebuildGuide.Signature(items) === plan.sig,
+                recommended: false
+            };
+        }).filter(Boolean);
+        if (!rows.length) return rows;
+
+        // A few roads are worth far less than a few hundred buildings carried
+        // across the city: among the plans close to the fewest roads, the one
+        // that keeps most of what stands - of the plan under way when there is
+        // one, of the live city otherwise
+        const minRoads = Math.min(...rows.map(r => r.roads || 0));
+        const close = rows.filter(r => (r.roads || 0) <= minRoads + 3);
+        const score = (r) => r.shared !== null ? -r.shared : (r.moved !== null ? r.moved : 0);
+        close.sort((a, b) => score(a) - score(b) || (a.roads || 0) - (b.roads || 0));
+        close[0].recommended = true;
+        return rows;
+    },
+
+
+    /**
+     * Makes one of the City Builder's variants the plan. Replacing a plan that
+     * is already half built asks first - that progress is what it throws away.
+     *
+     * @param {number} i - index into CityBuilder.Variants
+     */
+    UseVariant: (i) => {
+        if (typeof CityBuilder === 'undefined' || !CityBuilder.Variants || !CityBuilder.Variants[i]) return;
+        const p = RebuildGuide.Plan && RebuildGuide.Steps.length ? RebuildGuide.Progress() : null;
+        if (p && p.done > 0) {
+            const q = i18n('Boxes.RebuildGuide.ReplaceAsk')
+                .replace('__done__', p.done).replace('__total__', p.total);
+            if (!window.confirm(q)) return;
+        }
+        CityBuilder.SelectVariant(i);
+        RebuildGuide.UsePlan();
     },
 
 
@@ -494,7 +572,7 @@ let RebuildGuide = {
             if (!inst) continue;
             const a = inst.cityentity_id || inst.entityId;
             const m = RebuildGuide.Meta(a, inst.type);
-            if (!m || m.t === 'street' || m.t === 'main_building' || !m.n) continue;
+            if (!m || m.t === 'street' || !m.n) continue;
             const key = m.n + ' (' + m.h + '×' + m.w + ')';
             if (!seen.has(key)) seen.set(key, { key: key, a: a, n: m.n, w: m.w, h: m.h, s: m.s, t: m.t });
         }
@@ -846,7 +924,53 @@ let RebuildGuide = {
         if (p.roadsTotal) h.push(` &middot; ${i18n('Boxes.RebuildGuide.Roads')}: <b>${p.roadsDone}</b> / ${p.roadsTotal}`);
         h.push('</span>');
         h.push('</div>');
+        // what is left to the end, spelled out - the bar alone does not say it
+        h.push('<div class="rg-left">');
+        h.push(`<span>${i18n('Boxes.RebuildGuide.LeftToEnd')}: <b>${p.total - p.done}</b> ${i18n('Boxes.RebuildGuide.LeftBuildings')}`
+            + (p.roadsTotal ? `, <b>${p.roadsTotal - p.roadsDone}</b> ${i18n('Boxes.RebuildGuide.LeftRoads')}` : '') + '</span>');
+        h.push(`<label class="rg-compact-toggle" title="${i18n('Boxes.RebuildGuide.CompactHint')}"><input type="checkbox" class="rg-compact"${RebuildGuide.Compact() ? ' checked' : ''}> ${i18n('Boxes.RebuildGuide.CompactView')}</label>`);
         h.push('</div>');
+        h.push('</div>');
+
+        // The town hall is the one building the reconstruction mode cannot put
+        // away. Whoever stores the whole city first has an empty map with the
+        // town hall in it - so it goes to its planned spot before anything else
+        const hall = RebuildGuide.Steps.find(st => st.t === 'main_building');
+        if (hall && hall.state !== 'done') {
+            h.push(`<div class="rg-townhall rg-seekable" data-asset="${RebuildGuide.Escape(hall.a)}" title="${i18n('Boxes.RebuildGuide.SeekClick')}">`);
+            h.push(`<div class="rg-townhall-title">${i18n('Boxes.RebuildGuide.TownHallFirst')}`
+                + ` <span class="rg-townhall-pos">&rarr; ${hall.x}, ${hall.y}</span></div>`);
+            h.push(`<div class="rg-townhall-hint">${i18n('Boxes.RebuildGuide.TownHallHint')}</div>`);
+            if (hall.state === 'blocked' && hall.blocker) {
+                h.push(`<div class="rg-now-blocked">${i18n('Boxes.RebuildGuide.Blocked')}: <b>${RebuildGuide.Escape(hall.blocker.n)}</b></div>`);
+            }
+            h.push('</div>');
+        }
+
+        // the plan is picked here as well, not only in the City Builder: its
+        // buttons are where a player looks for "which plan does this follow"
+        const vrows = RebuildGuide.VariantRows();
+        h.push('<details class="rg-variants"' + (RebuildGuide.VariantsOpen ? ' open' : '') + '>');
+        h.push(`<summary>${i18n('Boxes.RebuildGuide.Variants')}${vrows.length ? ' (' + vrows.length + ')' : ''}</summary>`);
+        if (!vrows.length) {
+            h.push(`<div class="rg-variants-none">${i18n('Boxes.RebuildGuide.VariantsNone')}</div>`);
+        } else {
+            h.push('<table class="foe-table rg-variants-table"><tbody>');
+            for (const r of vrows) {
+                h.push(`<tr class="${r.current ? 'rg-v-current' : ''}${r.recommended ? ' rg-v-best' : ''}">`);
+                h.push(`<td class="rg-v-label">${r.label}`
+                    + (r.recommended ? ` <span class="rg-v-tag">${i18n('Boxes.RebuildGuide.Recommended')}</span>` : '')
+                    + '</td>');
+                h.push(`<td class="rg-v-moved">${r.moved !== null ? i18n('Boxes.RebuildGuide.MovedN').replace('__n__', r.moved) : ''}</td>`);
+                h.push(`<td class="rg-v-shared">${r.shared !== null ? i18n('Boxes.RebuildGuide.SharedN').replace('__n__', r.shared).replace('__total__', r.count) : ''}</td>`);
+                h.push('<td class="rg-v-act">' + (r.current
+                    ? `<span class="rg-v-now">${i18n('Boxes.RebuildGuide.CurrentPlan')}</span>`
+                    : `<button class="btn btn-slim rg-v-use" data-i="${r.i}">${i18n('Boxes.RebuildGuide.UseVariant')}</button>`) + '</td>');
+                h.push('</tr>');
+            }
+            h.push('</tbody></table>');
+        }
+        h.push('</details>');
 
         const newer = RebuildGuide.NewerShown();
         if (newer) {
@@ -905,6 +1029,7 @@ let RebuildGuide = {
                 if (spots.length > 1) {
                     h.push(` <span class="rg-seek-more">${i18n('Boxes.RebuildGuide.SeekMore').replace('__n__', spots.length - 1)}</span>`);
                 }
+                h.push(`<div class="rg-seek-count">${i18n('Boxes.RebuildGuide.SeekCount').replace('__n__', spots.length)}</div>`);
                 if (typeof BuildingMarker === 'undefined' || !BuildingMarker.supported) {
                     h.push(`<div class="rg-seek-nomark">${i18n('Boxes.RebuildGuide.SeekNoMarker')}</div>`);
                 }
@@ -914,7 +1039,7 @@ let RebuildGuide = {
 
         // the one building to pick up now, spelled out: a number on the map
         // says where, it never says what to carry there
-        const next = steps.find(s => s.state !== 'done');
+        const next = (hall && hall.state !== 'done') ? hall : steps.find(s => s.state !== 'done');
         if (next) {
             h.push(next.t === 'street'
                 ? '<div class="rg-now">'
@@ -995,7 +1120,8 @@ let RebuildGuide = {
 
         h.push(`<div class="rg-hint">${i18n('Boxes.RebuildGuide.Hint')}</div>`);
 
-        $('#RebuildGuideBoxBody').html(h.join('')).promise().done(function () {
+        $('#RebuildGuideBoxBody').toggleClass('rg-compact-mode', RebuildGuide.Compact())
+            .html(h.join('')).promise().done(function () {
             RebuildGuide.DrawMap();
 
             // hovering a rectangle says which building it is - a number alone is
@@ -1033,6 +1159,10 @@ let RebuildGuide = {
                 if (e.key === 'Escape') RebuildGuide.SeekSet(null);
             });
             $('#RebuildGuideBoxBody .rg-seek-clear').on('click', () => RebuildGuide.SeekSet(null));
+            $('#RebuildGuideBoxBody .rg-compact').on('change', function () {
+                localStorage.setItem('RebuildGuideCompact', this.checked ? '1' : '0');
+                RebuildGuide.Render();
+            });
             $('#RebuildGuideBoxBody .rg-seekable').on('click', function () {
                 RebuildGuide.SeekAsset(String($(this).attr('data-asset')));
             });
@@ -1048,6 +1178,12 @@ let RebuildGuide = {
             $('#RebuildGuideBoxBody .rg-oncity').on('click', () => RebuildGuide.ShowOnCity());
             $('#RebuildGuideBoxBody .rg-drop').on('click', () => RebuildGuide.Drop());
             $('#RebuildGuideBoxBody .rg-take').on('click', () => RebuildGuide.UsePlan());
+            $('#RebuildGuideBoxBody .rg-variants').on('toggle', function () {
+                RebuildGuide.VariantsOpen = this.open;
+            });
+            $('#RebuildGuideBoxBody .rg-v-use').on('click', function () {
+                RebuildGuide.UseVariant(parseInt($(this).attr('data-i')));
+            });
 
             $('#RebuildGuideBoxBody .rg-order').on('change', function () {
                 localStorage.setItem('RebuildGuideOrder', $(this).val());

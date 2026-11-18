@@ -1373,7 +1373,11 @@ ${variants.map(panel).join('\n')}
         let storedOpacity = parseFloat(localStorage.getItem('CityBuilderOpacity') || 0.9);
         // top-down view on an opaque background is the readable default: skewed
         // onto the live city the plan is hard to judge and blends into the map
-        const flatView = localStorage.getItem('CityBuilderFlatView') !== '0';
+        // the plan opens as a top-down map in its own window, like the City Map;
+        // the skewed overlay on the live city is the opt-in. A new key on purpose:
+        // the old one held "overlay" for players who never chose it, and the
+        // switch back was hidden under the stats panel
+        const flatView = localStorage.getItem('CityBuilderView') !== 'overlay';
         CityBuilder.ShowNames = localStorage.getItem('CityBuilderShowNames') === '1';
         CityBuilder.ShowTooltips = localStorage.getItem('CityBuilderTooltips') !== '0';
         CityBuilder.ShowProgress = localStorage.getItem('CityBuilderProgress') !== '0';
@@ -1528,7 +1532,7 @@ ${variants.map(panel).join('\n')}
             // drawn flat - the isometric look comes from the CSS transform
             $('.flat-view-toggle').on('change', function() {
                 const on = $(this).is(':checked');
-                localStorage.setItem('CityBuilderFlatView', on ? '1' : '0');
+                localStorage.setItem('CityBuilderView', on ? 'flat' : 'overlay');
                 $('#CityBuilderBoxBody .map-grid-wrapper').toggleClass('flat-view', on);
                 $('#CityBuilderBoxBody').toggleClass('flat-mode', on);
                 CityBuilder.PanX = 0;

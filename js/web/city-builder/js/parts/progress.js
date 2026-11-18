@@ -15,8 +15,8 @@
  * Build progress on the map: compares the planned layout with the live city
  * (or the open reconstruction draft) and hatches the result.
  *
- * - green: a building of the planned type stands exactly on its planned spot
- * - orange: a building overlapping an open planned spot of its own type, but
+ * - green edge, dimmed: a building of the planned type stands exactly on its planned spot
+ * - orange: a moved building overlapping an open planned spot of its own type, but
  *   not exactly on it - drawn at its real position
  * - red: a building moved in the draft that stands on no planned spot of its
  *   type - drawn at its real position
@@ -128,12 +128,35 @@ CityBuilder.Progress = {
 
         const near = [], wrong = [];
         for (const l of live) {
-            if (used.has(l)) continue;
+            // only what the player moved: a building still standing where it
+            // always stood and merely overlapping a planned spot of its type
+            // was drawn as a second, shifted copy of the plan
+            if (used.has(l) || !l.moved) continue;
             if (nearOwnSpot(l)) near.push(l);
-            else if (l.moved) wrong.push(l);
+            else wrong.push(l);
         }
 
         return { done, near, wrong };
+    },
+
+
+    /**
+     * Dims a rectangle that is done: a dark wash and a thin green edge.
+     *
+     * @param {CanvasRenderingContext2D} ctx - Canvas context.
+     * @param {Object} b - Rectangle in tiles { x, y, width, height }.
+     * @param {number} scale - Canvas pixels per map tile.
+     */
+    settle: (ctx, b, scale) => {
+        const x = parseInt(b.x) * scale, y = parseInt(b.y) * scale;
+        const w = b.width * scale, h = b.height * scale;
+        ctx.save();
+        ctx.fillStyle = 'rgba(20, 40, 25, 0.45)';
+        ctx.fillRect(x, y, w, h);
+        ctx.lineWidth = Math.max(1, scale * 0.06);
+        ctx.strokeStyle = 'rgba(70, 235, 70, 0.7)';
+        ctx.strokeRect(x + ctx.lineWidth / 2, y + ctx.lineWidth / 2, w - ctx.lineWidth, h - ctx.lineWidth);
+        ctx.restore();
     },
 
 
@@ -175,10 +198,18 @@ CityBuilder.Progress = {
 CityBuilder.Renderer.registerLayer('progress', (v) => {
     if (!CityBuilder.ShowProgress || !CityBuilder.Data?.length || (typeof ActiveMap !== 'undefined' && ActiveMap !== 'main')) return;
 
+    // the rebuild guide paints the same states for the plan it carries out -
+    // both on top of each other turned the map into stripes on stripes
+    if (typeof RebuildGuide !== 'undefined' && RebuildGuide.MatchesShown()) return;
+
     const P = CityBuilder.Progress;
     const { done, near, wrong } = P.compare();
 
-    for (const b of done) P.hatch(v.ctx, b, v.scale, 'rgba(70, 235, 70, 0.9)');
+    // a building already on its spot needs nothing - it is dimmed, not
+    // hatched: in a plan that keeps most of the city that is hundreds of
+    // buildings, and hatching them all hid the few that still have to move
+    for (const b of done) P.settle(v.ctx, b, v.scale);
+
     for (const b of near) P.hatch(v.ctx, b, v.scale, 'rgba(255, 160, 0, 0.95)');
     for (const b of wrong) P.hatch(v.ctx, b, v.scale, 'rgba(255, 60, 60, 0.95)');
 }, 'labels');
